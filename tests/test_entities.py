@@ -166,3 +166,12 @@ async def test_entity_ids_never_contain_vin(hass):
     assert ids
     assert not [i for i in ids if VIN.lower() in i]
     assert eid(hass, "sensor", "energy_used") == "sensor.ford_ev_explorer_ev_energy_used"
+
+
+async def test_device_info_avoids_deprecated_via_device(hass, fcq):
+    from custom_components.ford_ev.entity import FordEvEntity
+
+    entry = await async_setup_ford_ev(hass, fcq)
+    info = FordEvEntity(entry.runtime_data.engine, "energy_used").device_info
+    assert "via_device" not in info
+    assert info["identifiers"] == {(DOMAIN, VIN)}

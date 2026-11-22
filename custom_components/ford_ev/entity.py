@@ -21,12 +21,8 @@ class FordEvEntity(Entity):
         vehicle = engine.vehicle
         self._attr_translation_key = key
         self._attr_unique_id = f"{vehicle.vin}_{key}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, vehicle.vin)},
-            name=f"Ford EV {vehicle.name}",
-            model="Ford EV",
-            via_device=sorted(vehicle.identifiers)[0],
-        )
+        # The device itself is created in async_setup_entry, linked to the FCQ device.
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, vehicle.vin)})
 
     async def async_added_to_hass(self) -> None:
         """Follow engine updates."""

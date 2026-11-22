@@ -11,7 +11,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, device_registry as dr
 from homeassistant.helpers.typing import ConfigType
 
 from .alerts import AlertManager
@@ -68,6 +68,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: FordEvConfigEntry) -> bo
     if vehicle is None:
         raise ConfigEntryNotReady("FordConnect Query vehicle not found")
 
+    dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, vehicle.vin)},
+        name=f"Ford EV {vehicle.name}",
+        model="Ford EV",
+        via_device_id=vehicle.device_id,
+    )
     engine = FordEvEngine(hass, entry, vehicle)
     await engine.async_load()
     alerts = AlertManager(hass, engine, merged_config(entry))
