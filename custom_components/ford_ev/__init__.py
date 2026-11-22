@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import voluptuous as vol
@@ -27,11 +28,17 @@ STRATEGY_URL = f"/{DOMAIN}/ford-ev-strategy.js"
 STRATEGY_FILE = Path(__file__).parent / "frontend" / "ford-ev-strategy.js"
 
 
+def _strategy_digest() -> str:
+    """Short content hash of the strategy file, so browsers fetch a changed file instead of a cached one."""
+    return hashlib.sha256(STRATEGY_FILE.read_bytes()).hexdigest()[:8]
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Serve the dashboard strategy and register the integration-wide service."""
     await hass.http.async_register_static_paths([StaticPathConfig(STRATEGY_URL, str(STRATEGY_FILE), False)])
     if "frontend" in hass.config.components:
-        add_extra_js_url(hass, f"{STRATEGY_URL}?v={VERSION}")
+        digest = await hass.async_add_executor_job(_strategy_digest)
+        add_extra_js_url(hass, f"{STRATEGY_URL}?v={VERSION}-{digest}")
 
     async def reset_range_model(call: ServiceCall) -> None:
         loaded = [e for e in hass.config_entries.async_entries(DOMAIN) if e.state is ConfigEntryState.LOADED]
