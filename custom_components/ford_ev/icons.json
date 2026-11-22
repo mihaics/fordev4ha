@@ -1,0 +1,43 @@
+{
+  "entity": {
+    "sensor": {
+      "charging_cost": {"default": "mdi:cash"},
+      "cost_week": {"default": "mdi:cash"},
+      "cost_month": {"default": "mdi:cash"},
+      "consumption_week": {"default": "mdi:speedometer"},
+      "consumption_month": {"default": "mdi:speedometer"},
+      "car_full_range": {"default": "mdi:map-marker-distance"},
+      "car_km_per_percent": {"default": "mdi:battery-arrow-down-outline"},
+      "charging_state": {"default": "mdi:ev-station"},
+      "data_age": {"default": "mdi:cloud-clock-outline"},
+      "last_charge": {"default": "mdi:history"},
+      "model_consumption": {"default": "mdi:chart-bell-curve-cumulative"},
+      "model_soc": {"default": "mdi:battery-sync"},
+      "model_range": {"default": "mdi:map-marker-distance"},
+      "model_range_full": {"default": "mdi:battery-high"},
+      "model_range_full_tomorrow": {"default": "mdi:weather-partly-cloudy"},
+      "drive_factor": {"default": "mdi:car-cog"},
+      "climate_factor": {"default": "mdi:air-conditioner"},
+      "cycle_error": {"default": "mdi:target"},
+      "calibrations": {"default": "mdi:counter"},
+      "last_calibration": {"default": "mdi:battery-check"}
+    },
+    "number": {
+      "charge_target": {"default": "mdi:battery-charging-100"},
+      "plug_in_reminder_soc": {"default": "mdi:ev-plug-type2"},
+      "climate_setpoint": {"default": "mdi:thermometer"}
+    },
+    "switch": {
+      "climate_on": {"default": "mdi:air-conditioner"},
+      "notify_charging": {"default": "mdi:bell-outline"},
+      "notify_unlocked": {"default": "mdi:bell-outline"},
+      "notify_open": {"default": "mdi:bell-outline"},
+      "notify_plug_in_reminder": {"default": "mdi:bell-outline"},
+      "notify_warning_light": {"default": "mdi:bell-outline"},
+      "notify_data_stale": {"default": "mdi:bell-outline"},
+      "notify_night_activity": {"default": "mdi:bell-outline"},
+      "notify_weekly_summary": {"default": "mdi:bell-outline"},
+      "notify_calibration": {"default": "mdi:bell-outline"}
+    }
+  }
+}

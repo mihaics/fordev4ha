@@ -10,7 +10,7 @@ from .const import CONF_DEVICE_ID, CONF_VIN
 from .discovery import async_discover_vehicles, async_get_vehicle
 from .engine import FordEvConfigEntry, FordEvEngine, FordEvRuntime
 
-PLATFORMS: list[Platform] = []
+PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: FordEvConfigEntry) -> bool:

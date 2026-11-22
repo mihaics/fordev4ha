@@ -77,5 +77,164 @@
         "sun": "Sunday"
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "energy_used": {
+        "name": "Energy used"
+      },
+      "energy_added": {
+        "name": "Energy added to battery"
+      },
+      "charger_energy": {
+        "name": "Energy delivered by charger"
+      },
+      "charger_energy_home": {
+        "name": "Energy delivered by charger at home"
+      },
+      "charging_cost": {
+        "name": "Charging cost"
+      },
+      "distance_day": {
+        "name": "Distance today"
+      },
+      "distance_week": {
+        "name": "Distance this week"
+      },
+      "distance_month": {
+        "name": "Distance this month"
+      },
+      "energy_used_week": {
+        "name": "Energy used this week"
+      },
+      "energy_used_month": {
+        "name": "Energy used this month"
+      },
+      "charger_energy_week": {
+        "name": "Charger energy this week"
+      },
+      "charger_energy_month": {
+        "name": "Charger energy this month"
+      },
+      "charger_energy_home_week": {
+        "name": "Charger energy at home this week"
+      },
+      "charger_energy_home_month": {
+        "name": "Charger energy at home this month"
+      },
+      "cost_week": {
+        "name": "Charging cost this week"
+      },
+      "cost_month": {
+        "name": "Charging cost this month"
+      },
+      "consumption_week": {
+        "name": "Consumption this week"
+      },
+      "consumption_month": {
+        "name": "Consumption this month"
+      },
+      "car_full_range": {
+        "name": "Car estimate, range at 100 %"
+      },
+      "car_km_per_percent": {
+        "name": "Car estimate, km per %"
+      },
+      "charging_state": {
+        "name": "Charging state",
+        "state": {
+          "unplugged": "Unplugged",
+          "plugged": "Plugged in, not charging",
+          "charging": "Charging"
+        }
+      },
+      "data_age": {
+        "name": "Data age"
+      },
+      "last_charge": {
+        "name": "Last charge"
+      },
+      "outside_temperature": {
+        "name": "Outside temperature"
+      },
+      "model_consumption": {
+        "name": "Model consumption"
+      },
+      "model_soc": {
+        "name": "Model state of charge"
+      },
+      "model_range": {
+        "name": "Model range"
+      },
+      "model_range_full": {
+        "name": "Model range at 100 %"
+      },
+      "model_range_full_tomorrow": {
+        "name": "Model range at 100 % tomorrow"
+      },
+      "drive_factor": {
+        "name": "Range model drive factor"
+      },
+      "climate_factor": {
+        "name": "Range model climate factor"
+      },
+      "cycle_error": {
+        "name": "Range model last cycle error"
+      },
+      "calibrations": {
+        "name": "Range model calibrations"
+      },
+      "last_calibration": {
+        "name": "Last range calibration"
+      }
+    },
+    "binary_sensor": {
+      "charging_session": {
+        "name": "Charging session"
+      }
+    },
+    "number": {
+      "charge_target": {
+        "name": "Charge target"
+      },
+      "plug_in_reminder_soc": {
+        "name": "Plug-in reminder below"
+      },
+      "climate_setpoint": {
+        "name": "Climate setpoint"
+      }
+    },
+    "switch": {
+      "climate_on": {
+        "name": "Climate on while driving"
+      },
+      "notify_charging": {
+        "name": "Notify charging finished"
+      },
+      "notify_unlocked": {
+        "name": "Notify car unlocked"
+      },
+      "notify_open": {
+        "name": "Notify door or window open"
+      },
+      "notify_plug_in_reminder": {
+        "name": "Notify plug-in reminder"
+      },
+      "notify_warning_light": {
+        "name": "Notify warning light"
+      },
+      "notify_data_stale": {
+        "name": "Notify car data stopped"
+      },
+      "notify_night_activity": {
+        "name": "Notify night activity"
+      },
+      "notify_weekly_summary": {
+        "name": "Notify weekly summary"
+      },
+      "notify_calibration": {
+        "name": "Notify range calibration"
+      }
+    }
   }
 }
