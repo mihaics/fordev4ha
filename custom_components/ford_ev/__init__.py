@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import voluptuous as vol
+from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -11,7 +15,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
 from .alerts import AlertManager
-from .const import CONF_DEVICE_ID, CONF_VIN, DOMAIN, merged_config
+from .const import CONF_DEVICE_ID, CONF_VIN, DOMAIN, VERSION, merged_config
 from .discovery import async_discover_vehicles, async_get_vehicle
 from .engine import FordEvConfigEntry, FordEvEngine, FordEvRuntime
 
@@ -19,10 +23,15 @@ PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.EVENT, Platform.NU
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 SERVICE_RESET_RANGE_MODEL = "reset_range_model"
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
+STRATEGY_URL = f"/{DOMAIN}/ford-ev-strategy.js"
+STRATEGY_FILE = Path(__file__).parent / "frontend" / "ford-ev-strategy.js"
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Register the integration-wide service."""
+    """Serve the dashboard strategy and register the integration-wide service."""
+    await hass.http.async_register_static_paths([StaticPathConfig(STRATEGY_URL, str(STRATEGY_FILE), False)])
+    if "frontend" in hass.config.components:
+        add_extra_js_url(hass, f"{STRATEGY_URL}?v={VERSION}")
 
     async def reset_range_model(call: ServiceCall) -> None:
         loaded = [e for e in hass.config_entries.async_entries(DOMAIN) if e.state is ConfigEntryState.LOADED]

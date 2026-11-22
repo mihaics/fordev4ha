@@ -143,3 +143,15 @@ async def test_device_linked_to_fcq(hass, fcq):
     assert (DOMAIN, VIN) in device.identifiers
     assert device.via_device_id == fcq.device_id
     assert device.name == "Ford EV Test Explorer"
+
+
+async def test_calibrations_sensor_exposes_current_cycle(hass, fcq, freezer):
+    entry = await async_setup_ford_ev(hass, fcq)
+    model = entry.runtime_data.engine.state.model
+    model.cycle_km, model.cycle_charged, model.cycle_x_drive, model.cycle_x_hvac = 120.0, 5.5, 18.0, 2.0
+    entry.runtime_data.engine.notify_listeners()
+    await hass.async_block_till_done()
+    attrs = state(hass, "sensor", "calibrations").attributes
+    assert attrs["cycle_km"] == 120.0
+    assert attrs["cycle_charged_kwh"] == 5.5
+    assert attrs["cycle_model_kwh"] == pytest.approx(model.a * 18.0 + model.b * 2.0, abs=0.01)

@@ -173,6 +173,15 @@ def _last_calibration(engine: FordEvEngine) -> datetime | None:
     return dt_util.utc_from_timestamp(ts) if ts is not None else None
 
 
+def _cycle_attrs(engine: FordEvEngine) -> dict[str, Any]:
+    m = engine.state.model
+    return {
+        "cycle_km": round(m.cycle_km, 1),
+        "cycle_charged_kwh": round(m.cycle_charged, 2),
+        "cycle_model_kwh": round(m.a * m.cycle_x_drive + m.b * m.cycle_x_hvac, 2),
+    }
+
+
 def _last_charge(engine: FordEvEngine) -> str | None:
     last = engine.state.last_session
     return str(last.get("summary", ""))[:255] if last else None
@@ -318,7 +327,10 @@ SENSORS: tuple[FordEvSensorDescription, ...] = (
         suggested_display_precision=1,
     ),
     FordEvSensorDescription(
-        key="calibrations", value_fn=lambda e: e.state.model.calibrations, state_class=SensorStateClass.TOTAL_INCREASING
+        key="calibrations",
+        value_fn=lambda e: e.state.model.calibrations,
+        attrs_fn=_cycle_attrs,
+        state_class=SensorStateClass.TOTAL_INCREASING,
     ),
     FordEvSensorDescription(
         key="last_calibration",
