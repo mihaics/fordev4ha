@@ -155,3 +155,14 @@ async def test_calibrations_sensor_exposes_current_cycle(hass, fcq, freezer):
     assert attrs["cycle_km"] == 120.0
     assert attrs["cycle_charged_kwh"] == 5.5
     assert attrs["cycle_model_kwh"] == pytest.approx(model.a * 18.0 + model.b * 2.0, abs=0.01)
+
+
+async def test_entity_ids_never_contain_vin(hass):
+    from .conftest import FakeFcq
+
+    fake = FakeFcq(hass, VIN, f"VIN: {VIN}", model="2027 Explorer EV")
+    await async_setup_ford_ev(hass, fake)
+    ids = [e.entity_id for e in er.async_get(hass).entities.values() if e.platform == DOMAIN]
+    assert ids
+    assert not [i for i in ids if VIN.lower() in i]
+    assert eid(hass, "sensor", "energy_used") == "sensor.ford_ev_explorer_ev_energy_used"

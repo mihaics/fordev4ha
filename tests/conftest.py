@@ -64,14 +64,14 @@ def default_states() -> dict[str, str]:
 class FakeFcq:
     """A FordConnect Query vehicle: config entry, device, registry entities and states."""
 
-    def __init__(self, hass: HomeAssistant, vin: str, name: str) -> None:
+    def __init__(self, hass: HomeAssistant, vin: str, name: str, model: str | None = None) -> None:
         self.hass = hass
         self.vin = vin
         self.name = name
         self.entry = MockConfigEntry(domain=FCQ_DOMAIN, title=name, unique_id=vin)
         self.entry.add_to_hass(hass)
         device = dr.async_get(hass).async_get_or_create(
-            config_entry_id=self.entry.entry_id, identifiers={(FCQ_DOMAIN, vin)}, name=name
+            config_entry_id=self.entry.entry_id, identifiers={(FCQ_DOMAIN, vin)}, name=name, model=model
         )
         self.device_id = device.id
         ent_reg = er.async_get(hass)

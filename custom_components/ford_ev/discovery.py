@@ -6,6 +6,7 @@ working after the user renames entities.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -47,6 +48,20 @@ def _vin_from_unique_id(unique_id: str, key: str) -> str | None:
     return unique_id.removeprefix(_UID_PREFIX).removesuffix(f"_{key}") or None
 
 
+def _friendly_name(device: dr.DeviceEntry, vin: str) -> str:
+    """The user's name for the device; else its name unless it contains the VIN; else the model.
+
+    FCQ names devices "VIN: <vin>", which would put the VIN into every entity ID.
+    """
+    if device.name_by_user:
+        return device.name_by_user
+    name = device.name or ""
+    if name and vin.lower() not in name.lower():
+        return name
+    model = re.sub(r"^\d{4}\s+", "", device.model or "").strip()
+    return model or "Car"
+
+
 def _vehicles(hass: HomeAssistant) -> list[FcqVehicle]:
     ent_reg = er.async_get(hass)
     dev_reg = dr.async_get(hass)
@@ -72,7 +87,7 @@ def _vehicles(hass: HomeAssistant) -> list[FcqVehicle]:
             FcqVehicle(
                 device_id=device_id,
                 vin=vin,
-                name=device.name_by_user or device.name or vin,
+                name=_friendly_name(device, vin),
                 identifiers=frozenset(device.identifiers),
                 entities={key: e.entity_id for key, e in entries.items()},
             )
