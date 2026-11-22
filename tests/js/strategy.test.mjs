@@ -118,3 +118,12 @@ test("battery gauge shows red, yellow and green zones", () => {
   assert.equal(gauge.needle, true);
   assert.deepEqual(gauge.severity, { green: 40, yellow: 20, red: 0 });
 });
+
+test("every graph line has its own name, so FordConnect Query names never show", () => {
+  const view = buildDashboard(fakeHass(1), {}).views[0];
+  const graphs = view.sections.flatMap((s) => s.cards).filter((c) => c.type.endsWith("-graph"));
+  assert.ok(graphs.length > 0);
+  for (const g of graphs) {
+    for (const e of g.entities) assert.ok(typeof e === "object" && e.name, `${g.title}: ${JSON.stringify(e)}`);
+  }
+});
