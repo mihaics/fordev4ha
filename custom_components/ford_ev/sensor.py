@@ -213,8 +213,16 @@ def _total(key: str, fn: Callable[[FordEvEngine], float]) -> FordEvSensorDescrip
 
 
 def _period_sensor(key: str, period: str, counter: str, kind: dict[str, Any]) -> FordEvSensorDescription:
+    def previous(engine: FordEvEngine) -> dict[str, Any]:
+        return {"previous_period": engine.state.periods.previous.get(period, {}).get(counter)}
+
     return FordEvSensorDescription(
-        key=key, value_fn=_period(period, counter), period=period, state_class=SensorStateClass.TOTAL, **kind
+        key=key,
+        value_fn=_period(period, counter),
+        attrs_fn=previous,
+        period=period,
+        state_class=SensorStateClass.TOTAL,
+        **kind,
     )
 
 

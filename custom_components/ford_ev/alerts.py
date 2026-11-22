@@ -65,9 +65,10 @@ class DelayedCondition:
         hass: HomeAssistant,
         name: str,
         delay_s: float,
-        predicate: Callable[[], bool],
+        predicate: Callable[[], bool | None],
         on_fire: Callable[[], None],
         armed: dict[str, bool],
+        save: Callable[[], None],
     ) -> None:
         self.hass = hass
         self.name = name
@@ -75,17 +76,27 @@ class DelayedCondition:
         self.predicate = predicate
         self.on_fire = on_fire
         self.armed = armed
+        self.save = save
         self._timer: CALLBACK_TYPE | None = None
 
     @callback
     def evaluate(self) -> None:
-        """Re-check the condition after an input changed."""
-        if self.predicate():
+        """Re-check the condition after an input changed.
+
+        A predicate returns None while its inputs are not known yet (FCQ not loaded after a
+        restart); that leaves the armed state untouched, so an alert is not repeated.
+        """
+        result = self.predicate()
+        if result is None:
+            return
+        if result:
             if self.armed.get(self.name, True) and self._timer is None:
                 self._timer = async_call_later(self.hass, self.delay_s, self._expired)
         else:
             self.cancel()
-            self.armed[self.name] = True
+            if not self.armed.get(self.name, True):
+                self.armed[self.name] = True
+                self.save()
 
     @callback
     def cancel(self) -> None:
@@ -97,9 +108,10 @@ class DelayedCondition:
     @callback
     def _expired(self, _now: datetime) -> None:
         self._timer = None
-        if self.predicate() and self.armed.get(self.name, True):
+        if self.predicate() is True and self.armed.get(self.name, True):
             self.armed[self.name] = False
             self.on_fire()
+            self.save()
 
 
 def _parse_time(value: str) -> time:
@@ -134,11 +146,18 @@ class AlertManager:
         self.delay_min = int(config[CONF_ALERT_DELAY_MIN])
         self.unavailable_h = int(config[CONF_STALE_UNAVAILABLE_H])
         self.no_update_h = int(config[CONF_STALE_NO_UPDATE_H])
+        save = engine.save
         self._conditions = [
-            DelayedCondition(hass, "unlocked", self.delay_min * 60, self._is_unlocked, self._fire_unlocked, armed),
-            DelayedCondition(hass, "open", self.delay_min * 60, self._is_open, self._fire_open, armed),
+            DelayedCondition(hass, "unlocked", self.delay_min * 60, self._is_unlocked, self._fire_unlocked, armed, save),
+            DelayedCondition(hass, "open", self.delay_min * 60, self._is_open, self._fire_open, armed, save),
             DelayedCondition(
-                hass, "data_stale_unavailable", self.unavailable_h * 3600, self._soc_unavailable, self._fire_unavailable, armed
+                hass,
+                "data_stale_unavailable",
+                self.unavailable_h * 3600,
+                self._soc_unavailable,
+                self._fire_unavailable,
+                armed,
+                save,
             ),
         ]
 
@@ -179,20 +198,28 @@ class AlertManager:
 
     # ------------------------------------------------------------------ conditions
 
-    def _ignition_off(self) -> bool:
-        return self.engine.last_valid("ignitionstatus") == "OFF"
+    # Predicates return None while an input has no known value yet.
 
-    def _is_unlocked(self) -> bool:
-        return self._ignition_off() and self.engine.last_valid("doorlock") == "UNLOCKED"
+    def _is_unlocked(self) -> bool | None:
+        ignition = self.engine.last_valid("ignitionstatus")
+        lock = self.engine.last_valid("doorlock")
+        if ignition is None or lock is None:
+            return None
+        return ignition == "OFF" and lock == "UNLOCKED"
 
-    def _is_open(self) -> bool:
-        return self._ignition_off() and (
-            self.engine.last_valid("doorstatus") == "Open" or self.engine.last_valid("windowposition") == "Open"
-        )
+    def _is_open(self) -> bool | None:
+        ignition = self.engine.last_valid("ignitionstatus")
+        doors = self.engine.last_valid("doorstatus")
+        windows = self.engine.last_valid("windowposition")
+        if ignition is None or (doors is None and windows is None):
+            return None
+        return ignition == "OFF" and (doors == "Open" or windows == "Open")
 
-    def _soc_unavailable(self) -> bool:
+    def _soc_unavailable(self) -> bool | None:
         state = self.engine.fcq_state("soc")
-        return state is not None and state.state == "unavailable"
+        if state is None:
+            return None
+        return state.state == "unavailable"
 
     @callback
     def _on_fcq_change(self, key: str, prev: str | None, new_state: State) -> None:
@@ -214,14 +241,14 @@ class AlertManager:
 
     def _check_night(self, key: str, prev: str | None, new_state: State) -> None:
         new = new_state.state
-        if new in ("unknown", "unavailable"):
+        if new in ("unknown", "unavailable", "Unsupported"):
             return
         start = _parse_time(self.config[CONF_NIGHT_START])
         end = _parse_time(self.config[CONF_NIGHT_END])
         now = dt_util.now()
         if not in_window(now.time(), start, end):
             return
-        if key == "ignitionstatus" and prev == "OFF" and new not in ("OFF", "Unsupported"):
+        if key == "ignitionstatus" and prev == "OFF" and new != "OFF":
             reason = "ignition"
         elif key == "tracker" and prev == "home" and new != "home":
             reason = "left_home"

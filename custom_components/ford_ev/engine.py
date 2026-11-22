@@ -54,7 +54,8 @@ TRIP_END_DELAY_S = 120
 CALIBRATION_DELAY_S = 300
 LAST_SESSION_MAX_AGE = timedelta(hours=1)
 SAVE_DELAY_S = 10
-_INVALID = (STATE_UNKNOWN, STATE_UNAVAILABLE)
+# "Unsupported" is a transient FCQ value; it must not overwrite the last real value.
+_INVALID = (STATE_UNKNOWN, STATE_UNAVAILABLE, "Unsupported")
 
 
 def signal_update(entry_id: str) -> str:
@@ -138,6 +139,10 @@ class FordEvEngine:
         if soc is not None and soc >= SOC_FULL:
             self._start_calibration_timer()
         self._roll()
+        odometer = state_km(self.fcq_state("odometer"))
+        if odometer is not None:
+            self.state.last_odometer_km = odometer
+            self._roll()
         self.save()
         self.notify_listeners()
         await self.async_refresh_forecast()
@@ -202,9 +207,8 @@ class FordEvEngine:
             "charger_energy_home": st.charger_energy_home,
             "cost": st.cost,
         }
-        odometer = state_km(self.fcq_state("odometer"))
-        if odometer is not None:
-            totals["odometer"] = odometer
+        if st.last_odometer_km is not None:
+            totals["odometer"] = st.last_odometer_km
         return totals
 
     def set_setting(self, name: str, value: Any) -> None:
@@ -292,6 +296,19 @@ class FordEvEngine:
             self._on_evcc(prev, new_state.state)
         elif key == "ignitionstatus" and _valid(new_state):
             self._on_ignition(prev, new_state)
+        elif key == "odometer":
+            odometer = state_km(new_state)
+            if odometer is not None:
+                self._on_odometer(odometer)
+
+    def _on_odometer(self, odometer_km: float) -> None:
+        # Roll first, so distance driven before a missed period boundary stays in that period.
+        self._roll()
+        self.state.last_odometer_km = odometer_km
+        if self.state.pending_trip_end_ts is not None and self._trip_end_timer is None:
+            # A trip was waiting for the odometer (FCQ not loaded yet after a restart).
+            self._account_trip(self.state.pending_trip_end_ts)
+        self.save()
 
     def _on_soc(self, soc: float) -> None:
         self._roll()
@@ -384,6 +401,19 @@ class FordEvEngine:
         elif st.session is not None and st.pending_session_end is None and evcc != "C":
             self._finalise_session(evcc, dt_util.utcnow().timestamp())
 
+    def _apply_session_fallback(self) -> None:
+        """Count the open session's SoC rise as charger energy when the charger reported none."""
+        st = self.state
+        session = st.session
+        if session is None:
+            return
+        reported = st.charger_energy - session.charger_at_start - session.fallback_kwh
+        added = st.soc.energy_added - session.added_at_start
+        if reported <= 0 and added > session.fallback_kwh:
+            extra = added - session.fallback_kwh
+            self._add_charger_energy(extra)
+            session.fallback_kwh += extra
+
     def _finalise_session(self, to: str, end_ts: float) -> None:
         st = self.state
         session = st.session
@@ -391,13 +421,8 @@ class FordEvEngine:
         if session is None:
             return
         end_soc = self.current_soc()
-        charger_delta = st.charger_energy - session.charger_at_start
-        added_delta = st.soc.energy_added - session.added_at_start
-        if charger_delta <= 0 and added_delta > 0:
-            self._add_charger_energy(added_delta)
-            kwh = added_delta
-        else:
-            kwh = max(charger_delta, 0.0)
+        self._apply_session_fallback()
+        kwh = max(st.charger_energy - session.charger_at_start, 0.0)
         cost = st.cost - session.cost_at_start
         price = self.price()
         target = st.settings.charge_target
@@ -505,14 +530,18 @@ class FordEvEngine:
 
     def _on_ignition(self, prev: str | None, new_state: State) -> None:
         new = new_state.state
-        model = self.state.model
-        if prev == "OFF" and new not in ("OFF", "Unsupported"):
-            self.state.model = replace(
-                model, trip_start_ts=new_state.last_changed.timestamp(), trip_start_temp=self.current_temp_c()
+        st = self.state
+        if prev == "OFF" and new != "OFF":
+            st.model = replace(
+                st.model, trip_start_ts=new_state.last_changed.timestamp(), trip_start_temp=self.current_temp_c()
             )
             self.save()
-        elif new == "OFF" and prev not in (None, "OFF", "Unsupported"):
-            self.state.pending_trip_end_ts = new_state.last_changed.timestamp()
+        elif new == "OFF" and (
+            prev not in (None, "OFF")
+            # First value after a restart: close a trip that was open when Home Assistant stopped.
+            or (prev is None and st.model.trip_start_ts is not None and st.pending_trip_end_ts is None)
+        ):
+            st.pending_trip_end_ts = new_state.last_changed.timestamp()
             if self._trip_end_timer is not None:
                 self._trip_end_timer()
             self._trip_end_timer = async_call_later(self.hass, TRIP_END_DELAY_S, self._on_trip_end_timer)
@@ -525,26 +554,28 @@ class FordEvEngine:
             self._account_trip(self.state.pending_trip_end_ts)
 
     def _account_trip(self, end_ts: float) -> None:
+        """Charge the trip to the model; without an odometer reading it stays pending."""
         st = self.state
-        st.pending_trip_end_ts = None
         odometer = state_km(self.fcq_state("odometer"))
-        if odometer is not None:
-            temp = self.current_temp_c()
-            st.model = account_trip(
-                st.model,
-                TripInput(
-                    odometer_km=odometer,
-                    start_ts=st.model.trip_start_ts,
-                    end_ts=end_ts,
-                    start_temp_c=st.model.trip_start_temp,
-                    end_temp_c=temp if temp is not None else FALLBACK_TEMP_C,
-                    setpoint_c=st.settings.climate_setpoint,
-                    climate_on=st.settings.climate_on,
-                ),
-                self.capacity_kwh,
-            )
-        else:
-            st.model = replace(st.model, trip_start_ts=None, trip_start_temp=None)
+        if odometer is None:
+            st.pending_trip_end_ts = end_ts
+            self.save()
+            return
+        st.pending_trip_end_ts = None
+        temp = self.current_temp_c()
+        st.model = account_trip(
+            st.model,
+            TripInput(
+                odometer_km=odometer,
+                start_ts=st.model.trip_start_ts,
+                end_ts=end_ts,
+                start_temp_c=st.model.trip_start_temp,
+                end_temp_c=temp if temp is not None else FALLBACK_TEMP_C,
+                setpoint_c=st.settings.climate_setpoint,
+                climate_on=st.settings.climate_on,
+            ),
+            self.capacity_kwh,
+        )
         self.notify_listeners()
         self.save()
 
@@ -591,7 +622,12 @@ class FordEvEngine:
         self._calibration_timer = None
         soc = state_number(self.fcq_state("soc"))
         now_ts = dt_util.utcnow().timestamp()
-        if soc is None or soc < SOC_FULL or not calibration_allowed(self.state.model, now_ts):
+        if soc is None or soc < SOC_FULL:
+            return
+        # Vehicles without a charger counter: the open session's energy must be in this cycle.
+        self._apply_session_fallback()
+        if not calibration_allowed(self.state.model, now_ts):
+            self.save()
             return
         session_kwh, start_soc_car, start_soc_model = self._calibration_session()
         self.state.model, result = calibrate(

@@ -39,6 +39,7 @@ class ChargingSession:
     cost_at_start: float
     model_soc_at_start: float | None
     home: bool
+    fallback_kwh: float = 0.0
 
 
 @dataclass
@@ -57,6 +58,7 @@ class EngineState:
     model: RangeModelState = field(default_factory=RangeModelState)
     settings: Settings = field(default_factory=Settings)
     pending_trip_end_ts: float | None = None
+    last_odometer_km: float | None = None
     alerts_armed: dict[str, bool] = field(default_factory=dict)
 
     @classmethod
