@@ -2,16 +2,48 @@
 
 from __future__ import annotations
 
+import voluptuous as vol
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.typing import ConfigType
 
 from .alerts import AlertManager
-from .const import CONF_DEVICE_ID, CONF_VIN, merged_config
+from .const import CONF_DEVICE_ID, CONF_VIN, DOMAIN, merged_config
 from .discovery import async_discover_vehicles, async_get_vehicle
 from .engine import FordEvConfigEntry, FordEvEngine, FordEvRuntime
 
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.EVENT, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+SERVICE_RESET_RANGE_MODEL = "reset_range_model"
+ATTR_CONFIG_ENTRY_ID = "config_entry_id"
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the integration-wide service."""
+
+    async def reset_range_model(call: ServiceCall) -> None:
+        loaded = [e for e in hass.config_entries.async_entries(DOMAIN) if e.state is ConfigEntryState.LOADED]
+        entry_id = call.data.get(ATTR_CONFIG_ENTRY_ID)
+        if entry_id:
+            entry = next((e for e in loaded if e.entry_id == entry_id), None)
+            if entry is None:
+                raise ServiceValidationError(f"No loaded Ford EV entry {entry_id}")
+        elif len(loaded) == 1:
+            entry = loaded[0]
+        else:
+            raise ServiceValidationError("Several vehicles are set up: choose one with config_entry_id")
+        entry.runtime_data.engine.reset_range_model()
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RESET_RANGE_MODEL,
+        reset_range_model,
+        schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string}),
+    )
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: FordEvConfigEntry) -> bool:

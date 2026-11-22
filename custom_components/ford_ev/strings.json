@@ -277,5 +277,17 @@
         }
       }
     }
+  },
+  "services": {
+    "reset_range_model": {
+      "name": "Reset range model",
+      "description": "Sets the learned range factors back to their initial values and the model state of charge to the car's. Use it after correcting the battery capacity.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Vehicle",
+          "description": "Required when more than one vehicle is set up."
+        }
+      }
+    }
   }
 }
