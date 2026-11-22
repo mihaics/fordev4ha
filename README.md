@@ -7,6 +7,8 @@ A Home Assistant integration for Ford electric vehicles. It adds what the car's 
 - **Notifications.** Car left unlocked, door or window open, plug-in reminder, warning lights, charging finished, car data stopped, night activity, and a weekly summary.
 - **A ready-made dashboard** that builds itself from your vehicle's entities.
 
+![The Ford EV dashboard](docs/dashboard.png)
+
 Everything is set up from the Home Assistant UI. There is no YAML to write and no entity ID to edit.
 
 It builds on the [FordConnect Query](https://github.com/marq24/ha-fordconnect-query) integration, which talks to Ford. This integration only reads FordConnect Query's entities. It makes no network calls of its own.
