@@ -113,3 +113,43 @@ def auto_enable_custom_integrations(enable_custom_integrations):
 def fcq(hass: HomeAssistant) -> FakeFcq:
     """One FCQ vehicle."""
     return FakeFcq(hass, VIN, "Test Explorer")
+
+
+@pytest.fixture
+def fcq2(hass: HomeAssistant) -> FakeFcq:
+    """A second FCQ vehicle."""
+    return FakeFcq(hass, VIN2, "Second Car")
+
+
+async def async_setup_ford_ev(
+    hass: HomeAssistant,
+    fcq: FakeFcq,
+    options: dict[str, Any] | None = None,
+    entry_id: str | None = None,
+    data: dict[str, Any] | None = None,
+) -> MockConfigEntry:
+    """Add and set up a Ford EV entry for a fake vehicle."""
+    from custom_components.ford_ev.const import DOMAIN  # noqa: PLC0415
+
+    if hass.states.get("sensor.outside") is None:
+        hass.states.async_set("sensor.outside", "20", {"unit_of_measurement": "°C", "device_class": "temperature"})
+    kwargs: dict[str, Any] = {"entry_id": entry_id} if entry_id else {}
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=fcq.vin,
+        title=fcq.name,
+        data={
+            "device_id": fcq.device_id,
+            "vin": fcq.vin,
+            "battery_kwh": 60.0,
+            "temperature_sensor": "sensor.outside",
+            "weather_entity": None,
+            **(data or {}),
+        },
+        options=options or {},
+        **kwargs,
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry

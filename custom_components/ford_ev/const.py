@@ -53,3 +53,16 @@ DEFAULT_OPTIONS: dict[str, Any] = {
 def merged_config(entry: ConfigEntry) -> dict[str, Any]:
     """Defaults, overridden by setup data, overridden by options."""
     return {**DEFAULT_OPTIONS, **entry.data, **entry.options}
+
+NOTIFY_KEYS = (
+    "charging",
+    "unlocked",
+    "open",
+    "plug_in_reminder",
+    "warning_light",
+    "data_stale",
+    "night_activity",
+    "weekly_summary",
+    "calibration",
+)
+NOTIFY_DEFAULT_OFF = frozenset({"calibration"})
