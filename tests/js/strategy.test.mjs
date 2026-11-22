@@ -111,3 +111,10 @@ test("settings rows carry short names", () => {
     for (const row of card.entities) assert.ok(row.name && row.name.length <= 24, JSON.stringify(row));
   }
 });
+
+test("battery gauge shows red, yellow and green zones", () => {
+  const text = JSON.stringify(buildDashboard(fakeHass(1), {}));
+  const gauge = JSON.parse(text.match(/\{"type":"gauge"[^}]*\}[^}]*\}/)[0]);
+  assert.equal(gauge.needle, true);
+  assert.deepEqual(gauge.severity, { green: 40, yellow: 20, red: 0 });
+});

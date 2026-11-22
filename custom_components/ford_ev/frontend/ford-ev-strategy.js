@@ -116,7 +116,7 @@ export function buildView(vehicle) {
   const f = vehicle.fcq;
   const sections = [
     section("Now", [
-      f.soc ? { type: "gauge", entity: f.soc, name: "Battery", min: 0, max: 100, severity: { green: 50, yellow: 20, red: 0 } } : null,
+      f.soc ? { type: "gauge", entity: f.soc, name: "Battery", min: 0, max: 100, needle: true, severity: { green: 40, yellow: 20, red: 0 } } : null,
       tile(f.elveh, "Range"),
       tile(o.charging_state, "Charging"),
       tile(f.doorlock, "Locks"),
