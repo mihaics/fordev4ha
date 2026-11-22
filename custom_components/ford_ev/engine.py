@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import asdict, dataclass, replace
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -25,18 +25,34 @@ from .const import (
     CONF_BATTERY_KWH,
     CONF_PRICE_ENTITY,
     CONF_PRICE_FIXED,
+    CONF_TEMPERATURE_SENSOR,
+    CONF_WEATHER_ENTITY,
     DOMAIN,
     merged_config,
 )
 from .discovery import FcqVehicle
 from .periods import roll_periods
-from .range_model import add_charge, model_soc
+from .range_model import (
+    FALLBACK_TEMP_C,
+    SOC_FULL,
+    RangeModelState,
+    TripInput,
+    account_trip,
+    add_charge,
+    calibrate,
+    calibration_allowed,
+    model_soc,
+    seed_drive_factor,
+)
 from .state import STORAGE_VERSION, ChargingSession, EngineState
-from .units import state_km, state_number
+from .units import state_celsius, state_km, state_number, to_celsius, weather_celsius
 
 _LOGGER = logging.getLogger(__name__)
 
 SESSION_END_DELAY_S = 120
+TRIP_END_DELAY_S = 120
+CALIBRATION_DELAY_S = 300
+LAST_SESSION_MAX_AGE = timedelta(hours=1)
 SAVE_DELAY_S = 10
 _INVALID = (STATE_UNKNOWN, STATE_UNAVAILABLE)
 
@@ -70,6 +86,9 @@ class FordEvEngine:
         self._last_valid: dict[str, str] = {}
         self._unsubs: list[CALLBACK_TYPE] = []
         self._session_end_timer: CALLBACK_TYPE | None = None
+        self._trip_end_timer: CALLBACK_TYPE | None = None
+        self._calibration_timer: CALLBACK_TYPE | None = None
+        self.forecast_tomorrow_c: float | None = None
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -92,14 +111,27 @@ class FordEvEngine:
             if _valid(st):
                 self._last_valid[key] = st.state  # type: ignore[union-attr]
         self._init_baselines()
+        if self.first_start:
+            self._seed_model()
         self._recover_session()
+        self._recover_trip()
 
         self._unsubs.append(
             async_track_state_change_event(self.hass, list(self.vehicle.entities.values()), self._on_fcq_change)
         )
+        temperature_entities = [e for e in (self.config.get(CONF_TEMPERATURE_SENSOR), self.config.get(CONF_WEATHER_ENTITY)) if e]
+        if temperature_entities:
+            self._unsubs.append(
+                async_track_state_change_event(self.hass, temperature_entities, self._on_temperature_change)
+            )
         self._unsubs.append(async_track_time_change(self.hass, self._on_midnight, hour=0, minute=0, second=5))
+        self._unsubs.append(async_track_time_change(self.hass, self._on_forecast_time, minute=7, second=0))
+        soc = state_number(self.fcq_state("soc"))
+        if soc is not None and soc >= SOC_FULL:
+            self._start_calibration_timer()
         self._roll()
         self.save()
+        await self.async_refresh_forecast()
 
     async def async_stop(self) -> None:
         """Stop listening and save."""
@@ -107,6 +139,10 @@ class FordEvEngine:
             unsub()
         self._unsubs.clear()
         self._cancel_session_end_timer()
+        for timer in (self._trip_end_timer, self._calibration_timer):
+            if timer is not None:
+                timer()
+        self._trip_end_timer = self._calibration_timer = None
         await self._store.async_save(self.state.to_dict())
 
     def save(self) -> None:
@@ -233,10 +269,19 @@ class FordEvEngine:
                 self._on_charger(reading)
         elif key == "evccstatus" and _valid(new_state):
             self._on_evcc(prev, new_state.state)
+        elif key == "ignitionstatus" and _valid(new_state):
+            self._on_ignition(prev, new_state)
 
     def _on_soc(self, soc: float) -> None:
         self._roll()
         self.state.soc = apply_soc_change(self.state.soc, soc, self.capacity_kwh, self.is_plugged(), self.is_home())
+        if self.state.model.model_energy is None:
+            self.state.model = replace(self.state.model, model_energy=soc / 100 * self.capacity_kwh)
+        if soc >= SOC_FULL:
+            self._start_calibration_timer()
+        elif self._calibration_timer is not None:
+            self._calibration_timer()
+            self._calibration_timer = None
         self.save()
 
     def _on_charger(self, reading: float) -> None:
@@ -374,6 +419,184 @@ class FordEvEngine:
         self.emit("charging", event_type, data)
         self.notify_listeners()
         self.save()
+
+    # ------------------------------------------------------------------ temperature
+
+    def current_temp_c(self) -> float | None:
+        """Outside temperature: the sensor, else the weather entity, else None."""
+        sensor = self.config.get(CONF_TEMPERATURE_SENSOR)
+        if sensor:
+            value = state_celsius(self.hass.states.get(sensor))
+            if value is not None:
+                return value
+        weather = self.config.get(CONF_WEATHER_ENTITY)
+        if weather:
+            return weather_celsius(self.hass.states.get(weather))
+        return None
+
+    @callback
+    def _on_temperature_change(self, _event: Event[EventStateChangedData]) -> None:
+        self.notify_listeners()
+
+    @callback
+    def _on_forecast_time(self, _now: datetime) -> None:
+        self.entry.async_create_task(self.hass, self.async_refresh_forecast(), "ford_ev forecast")
+
+    async def async_refresh_forecast(self) -> None:
+        """Tomorrow's mean temperature from the weather entity's daily forecast."""
+        weather = self.config.get(CONF_WEATHER_ENTITY)
+        value: float | None = None
+        if weather and self.hass.services.has_service("weather", "get_forecasts"):
+            try:
+                response = await self.hass.services.async_call(
+                    "weather",
+                    "get_forecasts",
+                    {"type": "daily"},
+                    target={"entity_id": weather},
+                    blocking=True,
+                    return_response=True,
+                )
+                value = self._parse_forecast(weather, response)
+            except Exception:  # noqa: BLE001 - a missing forecast must never break the engine
+                _LOGGER.debug("Forecast for %s unavailable", weather, exc_info=True)
+        if value != self.forecast_tomorrow_c:
+            self.forecast_tomorrow_c = value
+            self.notify_listeners()
+
+    def _parse_forecast(self, weather: str, response: Any) -> float | None:
+        forecast = (response or {}).get(weather, {}).get("forecast") or []
+        tomorrow = (dt_util.now() + timedelta(days=1)).date()
+        state = self.hass.states.get(weather)
+        unit = state.attributes.get("temperature_unit") if state else None
+        for item in forecast:
+            when = dt_util.parse_datetime(str(item.get("datetime", "")))
+            if when is None or dt_util.as_local(when).date() != tomorrow:
+                continue
+            high = item.get("temperature")
+            low = item.get("templow")
+            if high is None:
+                return None
+            mean = (float(high) + float(low)) / 2 if low is not None else float(high)
+            return to_celsius(mean, unit)
+        return None
+
+    # ------------------------------------------------------------------ trips
+
+    def _on_ignition(self, prev: str | None, new_state: State) -> None:
+        new = new_state.state
+        model = self.state.model
+        if prev == "OFF" and new not in ("OFF", "Unsupported"):
+            self.state.model = replace(
+                model, trip_start_ts=new_state.last_changed.timestamp(), trip_start_temp=self.current_temp_c()
+            )
+            self.save()
+        elif new == "OFF" and prev not in (None, "OFF", "Unsupported"):
+            self.state.pending_trip_end_ts = new_state.last_changed.timestamp()
+            if self._trip_end_timer is not None:
+                self._trip_end_timer()
+            self._trip_end_timer = async_call_later(self.hass, TRIP_END_DELAY_S, self._on_trip_end_timer)
+            self.save()
+
+    @callback
+    def _on_trip_end_timer(self, _now: datetime) -> None:
+        self._trip_end_timer = None
+        if self.state.pending_trip_end_ts is not None:
+            self._account_trip(self.state.pending_trip_end_ts)
+
+    def _account_trip(self, end_ts: float) -> None:
+        st = self.state
+        st.pending_trip_end_ts = None
+        odometer = state_km(self.fcq_state("odometer"))
+        if odometer is not None:
+            temp = self.current_temp_c()
+            st.model = account_trip(
+                st.model,
+                TripInput(
+                    odometer_km=odometer,
+                    start_ts=st.model.trip_start_ts,
+                    end_ts=end_ts,
+                    start_temp_c=st.model.trip_start_temp,
+                    end_temp_c=temp if temp is not None else FALLBACK_TEMP_C,
+                    setpoint_c=st.settings.climate_setpoint,
+                    climate_on=st.settings.climate_on,
+                ),
+                self.capacity_kwh,
+            )
+        else:
+            st.model = replace(st.model, trip_start_ts=None, trip_start_temp=None)
+        self.notify_listeners()
+        self.save()
+
+    def _recover_trip(self) -> None:
+        st = self.state
+        if st.pending_trip_end_ts is not None:
+            self._account_trip(st.pending_trip_end_ts)
+            return
+        ignition = self.fcq_state("ignitionstatus")
+        if st.model.trip_start_ts is not None and ignition is not None and ignition.state == "OFF":
+            self._account_trip(ignition.last_changed.timestamp())
+
+    # ------------------------------------------------------------------ range model
+
+    def _seeded_model(self, avg_speed: float | None = None) -> RangeModelState:
+        soc = state_number(self.fcq_state("soc"))
+        temp = self.current_temp_c()
+        a0 = seed_drive_factor(soc, state_km(self.fcq_state("elveh")), self.capacity_kwh, temp if temp is not None else 20.0)
+        model = RangeModelState(
+            a=a0,
+            a0=a0,
+            model_energy=soc / 100 * self.capacity_kwh if soc is not None else None,
+            odo_accounted=state_km(self.fcq_state("odometer")),
+        )
+        if avg_speed is not None:
+            model = replace(model, avg_speed=avg_speed)
+        return model
+
+    def _seed_model(self) -> None:
+        self.state.model = self._seeded_model()
+
+    def reset_range_model(self) -> None:
+        """Back to the initial factors; model SoC from the car's SoC. Keeps the average speed."""
+        self.state.model = self._seeded_model(avg_speed=self.state.model.avg_speed)
+        self.notify_listeners()
+        self.save()
+
+    def _start_calibration_timer(self) -> None:
+        if self._calibration_timer is None:
+            self._calibration_timer = async_call_later(self.hass, CALIBRATION_DELAY_S, self._on_calibration_timer)
+
+    @callback
+    def _on_calibration_timer(self, _now: datetime) -> None:
+        self._calibration_timer = None
+        soc = state_number(self.fcq_state("soc"))
+        now_ts = dt_util.utcnow().timestamp()
+        if soc is None or soc < SOC_FULL or not calibration_allowed(self.state.model, now_ts):
+            return
+        session_kwh, start_soc_car, start_soc_model = self._calibration_session()
+        self.state.model, result = calibrate(
+            self.state.model, self.capacity_kwh, now_ts, session_kwh, start_soc_car, start_soc_model
+        )
+        factors = (
+            f"drive x{result.a:.2f} climate x{result.b:.2f}" if result.valid else f"NOT USED, ratio {result.ratio:.2f}"
+        )
+        summary = (
+            f"{result.km:.0f} km, charged {result.charged_kwh:.1f} kWh, model {result.predicted_kwh:.1f} kWh "
+            f"({result.error_pct:+.1f}%) | {factors}"
+        )
+        self.emit("report", "calibration", {**asdict(result), "summary": summary})
+        self.notify_listeners()
+        self.save()
+
+    def _calibration_session(self) -> tuple[float | None, float | None, float | None]:
+        st = self.state
+        if st.session is not None:
+            return st.charger_energy - st.session.charger_at_start, st.session.start_soc, st.session.model_soc_at_start
+        last = st.last_session
+        if last:
+            end = dt_util.parse_datetime(str(last.get("end", "")))
+            if end is not None and dt_util.utcnow() - end <= LAST_SESSION_MAX_AGE:
+                return last.get("kwh"), last.get("start_soc"), last.get("model_soc_at_start")
+        return None, None, None
 
     # ------------------------------------------------------------------ timers
 
