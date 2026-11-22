@@ -1,0 +1,81 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Choose the vehicle",
+        "description": "Vehicles found in the FordConnect Query integration.",
+        "data": {
+          "device_id": "Vehicle"
+        }
+      },
+      "settings": {
+        "title": "{name}",
+        "description": "FordConnect Query does not report the battery size or the outside temperature.",
+        "data": {
+          "battery_kwh": "Usable battery capacity",
+          "temperature_sensor": "Outside temperature sensor",
+          "weather_entity": "Weather entity"
+        },
+        "data_description": {
+          "battery_kwh": "Usable (net) capacity in kWh, from your vehicle documentation. Used for the energy figures and the range model.",
+          "temperature_sensor": "Optional. An outdoor temperature sensor. If empty, the weather entity's temperature is used.",
+          "weather_entity": "Used as temperature fallback and for tomorrow's range forecast."
+        }
+      }
+    },
+    "error": {
+      "temperature_source_required": "Choose an outside temperature sensor, a weather entity, or both."
+    },
+    "abort": {
+      "no_vehicles": "No vehicle found. Install and set up FordConnect Query first: {url}",
+      "already_configured": "All vehicles found are already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Ford EV options",
+        "data": {
+          "notify_services": "Notification services",
+          "notify_entities": "Notification entities",
+          "dashboard_path": "Dashboard path",
+          "price_entity": "Electricity price entity",
+          "price_fixed": "Fixed electricity price",
+          "alert_delay_min": "Unlocked / open alert delay",
+          "reminder_time": "Plug-in reminder time",
+          "night_start": "Night window start",
+          "night_end": "Night window end",
+          "weekly_day": "Weekly summary day",
+          "weekly_time": "Weekly summary time",
+          "stale_unavailable_h": "Alert when the integration is unavailable for",
+          "stale_no_update_h": "Alert when the car has not reported for",
+          "battery_kwh": "Usable battery capacity",
+          "temperature_sensor": "Outside temperature sensor",
+          "weather_entity": "Weather entity"
+        },
+        "data_description": {
+          "notify_services": "For example mobile_app_<phone>. Leave empty to send no notifications; the event entities still fire.",
+          "dashboard_path": "Opened when a notification is tapped, for example /dashboard-ford-ev.",
+          "price_entity": "Price per kWh in your currency. Takes precedence over the fixed price.",
+          "price_fixed": "Price per kWh, used when no price entity is set. Only charging at home is priced."
+        }
+      }
+    },
+    "error": {
+      "temperature_source_required": "Choose an outside temperature sensor, a weather entity, or both."
+    }
+  },
+  "selector": {
+    "weekday": {
+      "options": {
+        "mon": "Monday",
+        "tue": "Tuesday",
+        "wed": "Wednesday",
+        "thu": "Thursday",
+        "fri": "Friday",
+        "sat": "Saturday",
+        "sun": "Sunday"
+      }
+    }
+  }
+}
