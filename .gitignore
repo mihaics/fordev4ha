@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node (frontend build)
+node_modules/
+
+# Local Home Assistant dev instance and anything copied from a real system
+config/
+.storage/
+secrets.yaml
+*.db
+*.db-shm
+*.db-wal
+home-assistant*.log
+.env
+.env.*
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
