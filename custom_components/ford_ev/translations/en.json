@@ -235,6 +235,47 @@
       "notify_calibration": {
         "name": "Notify range calibration"
       }
+    },
+    "event": {
+      "alert": {
+        "name": "Alert",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "unlocked": "Car unlocked",
+              "open": "Door or window open",
+              "warning_light": "Warning light",
+              "data_stale": "Car data stopped",
+              "night_activity": "Night activity",
+              "plug_in_reminder": "Plug-in reminder"
+            }
+          }
+        }
+      },
+      "charging": {
+        "name": "Charging",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "session_started": "Session started",
+              "charging_complete": "Charging complete",
+              "charging_stopped_early": "Charging stopped early",
+              "unplugged_while_charging": "Unplugged while charging"
+            }
+          }
+        }
+      },
+      "report": {
+        "name": "Report",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "weekly_summary": "Weekly summary",
+              "calibration": "Range calibration"
+            }
+          }
+        }
+      }
     }
   }
 }

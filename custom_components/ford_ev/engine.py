@@ -89,6 +89,8 @@ class FordEvEngine:
         self._trip_end_timer: CALLBACK_TYPE | None = None
         self._calibration_timer: CALLBACK_TYPE | None = None
         self.forecast_tomorrow_c: float | None = None
+        self._loaded = False
+        self._fcq_listeners: list[Callable[[str, str | None, State], None]] = []
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -97,14 +99,20 @@ class FordEvEngine:
         """Usable battery capacity."""
         return float(self.config[CONF_BATTERY_KWH])
 
-    async def async_start(self) -> None:
-        """Load state, reconcile what happened while stopped, start listening."""
+    async def async_load(self) -> None:
+        """Load persisted state. Entities read it, so this runs before they are added."""
         data = await self._store.async_load()
         if data is None:
             self.first_start = True
             self.state = EngineState.new()
         else:
             self.state = EngineState.from_dict(data)
+        self._loaded = True
+
+    async def async_start(self) -> None:
+        """Reconcile what happened while stopped, then start listening."""
+        if not self._loaded:
+            await self.async_load()
 
         for key, entity_id in self.vehicle.entities.items():
             st = self.hass.states.get(entity_id)
@@ -131,6 +139,7 @@ class FordEvEngine:
             self._start_calibration_timer()
         self._roll()
         self.save()
+        self.notify_listeners()
         await self.async_refresh_forecast()
 
     async def async_stop(self) -> None:
@@ -255,7 +264,19 @@ class FordEvEngine:
         if _valid(new_state):
             self._last_valid[key] = new_state.state
         self.handle_fcq_change(key, prev, new_state)
+        for listener in list(self._fcq_listeners):
+            listener(key, prev, new_state)
         self.notify_listeners()
+
+    @callback
+    def async_add_fcq_listener(self, cb: Callable[[str, str | None, State], None]) -> CALLBACK_TYPE:
+        """Call cb(key, last valid state before the change, new state) after each FCQ change."""
+        self._fcq_listeners.append(cb)
+
+        def remove() -> None:
+            self._fcq_listeners.remove(cb)
+
+        return remove
 
     def handle_fcq_change(self, key: str, prev: str | None, new_state: State) -> None:
         """React to one FCQ state change. prev is the last valid state before it."""
