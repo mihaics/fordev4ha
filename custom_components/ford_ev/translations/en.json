@@ -54,7 +54,7 @@
           "weather_entity": "Weather entity"
         },
         "data_description": {
-          "notify_services": "For example mobile_app_<phone>. Leave empty to send no notifications; the event entities still fire.",
+          "notify_services": "For example mobile_app_ followed by your phone name. Leave empty to send no notifications; the event entities still fire.",
           "dashboard_path": "Opened when a notification is tapped, for example /dashboard-ford-ev.",
           "price_entity": "Price per kWh in your currency. Takes precedence over the fixed price.",
           "price_fixed": "Price per kWh, used when no price entity is set. Only charging at home is priced."
