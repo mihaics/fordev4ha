@@ -1,0 +1,14 @@
+{
+  "domain": "ford_ev",
+  "name": "Ford EV",
+  "after_dependencies": ["frontend"],
+  "codeowners": ["@mihaics"],
+  "config_flow": true,
+  "dependencies": ["http"],
+  "documentation": "https://github.com/mihaics/fordev4ha",
+  "integration_type": "device",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/mihaics/fordev4ha/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
