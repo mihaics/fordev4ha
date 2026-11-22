@@ -634,11 +634,11 @@ class FordEvEngine:
             self.state.model, self.capacity_kwh, now_ts, session_kwh, start_soc_car, start_soc_model
         )
         factors = (
-            f"drive x{result.a:.2f} climate x{result.b:.2f}" if result.valid else f"NOT USED, ratio {result.ratio:.2f}"
+            f"Drive x{result.a:.2f}, climate x{result.b:.2f}." if result.valid else f"Not used (ratio {result.ratio:.2f})."
         )
         summary = (
-            f"{result.km:.0f} km, charged {result.charged_kwh:.1f} kWh, model {result.predicted_kwh:.1f} kWh "
-            f"({result.error_pct:+.1f}%) | {factors}"
+            f"{result.km:.0f} km, {result.charged_kwh:.1f} kWh charged, model {result.predicted_kwh:.1f} kWh "
+            f"({result.error_pct:+.1f}%). {factors}"
         )
         self.emit("report", "calibration", {**asdict(result), "summary": summary})
         self.notify_listeners()

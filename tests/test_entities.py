@@ -44,7 +44,7 @@ async def test_core_sensors_present(hass, fcq):
 
 async def test_entity_ids_use_vehicle_name(hass, fcq):
     await async_setup_ford_ev(hass, fcq)
-    assert eid(hass, "sensor", "energy_used") == "sensor.ford_ev_test_explorer_energy_used"
+    assert eid(hass, "sensor", "energy_used") == "sensor.ev_energy_used"
 
 
 async def test_counters_update(hass, fcq):
@@ -142,7 +142,7 @@ async def test_device_linked_to_fcq(hass, fcq):
     [device] = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
     assert (DOMAIN, VIN) in device.identifiers
     assert device.via_device_id == fcq.device_id
-    assert device.name == "Ford EV Test Explorer"
+    assert device.name == "EV"
 
 
 async def test_calibrations_sensor_exposes_current_cycle(hass, fcq, freezer):
@@ -165,7 +165,7 @@ async def test_entity_ids_never_contain_vin(hass):
     ids = [e.entity_id for e in er.async_get(hass).entities.values() if e.platform == DOMAIN]
     assert ids
     assert not [i for i in ids if VIN.lower() in i]
-    assert eid(hass, "sensor", "energy_used") == "sensor.ford_ev_explorer_ev_energy_used"
+    assert eid(hass, "sensor", "energy_used") == "sensor.ev_energy_used"
 
 
 async def test_device_info_avoids_deprecated_via_device(hass, fcq):
@@ -175,3 +175,16 @@ async def test_device_info_avoids_deprecated_via_device(hass, fcq):
     info = FordEvEntity(entry.runtime_data.engine, "energy_used").device_info
     assert "via_device" not in info
     assert info["identifiers"] == {(DOMAIN, VIN)}
+
+
+async def test_second_vehicle_device_named_after_car(hass, fcq, fcq2):
+    await async_setup_ford_ev(hass, fcq)
+    e2 = await async_setup_ford_ev(hass, fcq2)
+    [device] = dr.async_entries_for_config_entry(dr.async_get(hass), e2.entry_id)
+    assert device.name == "EV Second Car"
+
+
+async def test_switch_friendly_names_are_short(hass, fcq):
+    await async_setup_ford_ev(hass, fcq)
+    assert state(hass, "switch", "notify_unlocked").attributes["friendly_name"] == "EV Notify unlocked"
+    assert state(hass, "sensor", "charger_energy").attributes["friendly_name"] == "EV Energy charged"

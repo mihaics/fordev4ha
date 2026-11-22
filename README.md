@@ -62,7 +62,7 @@ It builds on the [FordConnect Query](https://github.com/marq24/ha-fordconnect-qu
    - The sensor is preferred when it has a value.
    - The weather entity is the fallback, and it provides tomorrow's forecast for the "range at 100 % tomorrow" estimate.
 
-After setup you get one device, **Ford EV *your vehicle name***, with the entities listed [below](#entity-reference). It is linked to the FordConnect Query device.
+After setup you get one device, **EV**, with the entities listed [below](#entity-reference). With several vehicles, each device is named **EV *vehicle name***. It is linked to the FordConnect Query device.
 
 ## Options
 
@@ -87,11 +87,11 @@ Settings you may change day to day are entities on the device, so they also appe
 
 | Entity | Default | Meaning |
 |---|---|---|
-| Climate on while driving | on | Whether heating or air conditioning normally runs while you drive. |
+| Climate while driving | on | Whether heating or air conditioning normally runs while you drive. |
 | Climate setpoint | 21 °C | The cabin temperature you usually set. |
 | Charge target | 100 % | Used to tell "charging complete" from "charging stopped early". |
 | Plug-in reminder below | 40 % | The plug-in reminder is sent only below this state of charge. |
-| Notify … (9 switches) | on, except range calibration | Turns each notification type on or off. |
+| Notify … (9 switches) | on, except calibration | Turns each notification type on or off. |
 
 Charging is priced only at home, meaning the car's tracker is in the `home` zone. Each kWh is priced at the moment it is counted, so time-of-use and dynamic tariffs are handled correctly.
 
@@ -128,13 +128,13 @@ The dashboard is regenerated every time it is opened, so new entities appear on 
 |---|---|---|
 | Charging complete / stopped early | Charging stopped while still plugged in. "Complete" if the state of charge reached the charge target (within 1 %). Includes state of charge, range and the session summary. | on |
 | Car unlocked | Ignition off and the car unlocked for the alert delay. Says which doors, and whether at home or away. | on |
-| Car open while parked | Ignition off and a door or window open for the alert delay. Says which. | on |
-| Plug in the car | At the reminder time: car at home, below the reminder threshold, not plugged in. | on |
-| Car warning light | The number of active warning lights went up. | on |
-| Car data stopped | FordConnect Query unavailable, or no update from the car, for the configured time. | on |
-| Car activity at night | Ignition turned on, or the car left home, inside the night window. Sent with high priority. | on |
-| Car - this week | Weekly: km, energy used, consumption, energy charged (at home), cost, current state of charge. | on |
-| Range model calibrated | After each calibration: error, new factors, capacity estimate. | off |
+| Car open | Ignition off and a door or window open for the alert delay. Says which. | on |
+| Plug-in reminder | At the reminder time: car at home, below the reminder threshold, not plugged in. | on |
+| Warning light | The number of active warning lights went up. | on |
+| No data from car | FordConnect Query unavailable, or no update from the car, for the configured time. | on |
+| Night activity | Ignition turned on, or the car left home, inside the night window. Sent with high priority. | on |
+| Weekly summary | Weekly: km, energy used, consumption, energy charged (at home), cost, battery level. | on |
+| Range calibrated | After each calibration: error and new factors. | off |
 
 **How each alert fires:**
 - Each alert fires once per occurrence. The unlocked alert, for example, fires again only after the car has been locked in between. This also holds across Home Assistant restarts.
@@ -145,9 +145,9 @@ The dashboard is regenerated every time it is opened, so new entities appear on 
 
 | Entity | Event types |
 |---|---|
-| `event.ford_ev_<vehicle>_alert` | `unlocked`, `open`, `warning_light`, `data_stale`, `night_activity`, `plug_in_reminder` |
-| `event.ford_ev_<vehicle>_charging` | `session_started`, `charging_complete`, `charging_stopped_early`, `unplugged_while_charging` |
-| `event.ford_ev_<vehicle>_report` | `weekly_summary`, `calibration` |
+| `event.ev_alerts` | `unlocked`, `open`, `warning_light`, `data_stale`, `night_activity`, `plug_in_reminder` |
+| `event.ev_charging_events` | `session_started`, `charging_complete`, `charging_stopped_early`, `unplugged_while_charging` |
+| `event.ev_reports` | `weekly_summary`, `calibration` |
 
 The events fire even when the matching notification switch is off or no notification target is configured. The event's details are in its attributes. Example:
 
@@ -156,7 +156,7 @@ automation:
   - alias: Flash the hallway light when the car is left unlocked
     triggers:
       - trigger: state
-        entity_id: event.ford_ev_my_car_alert
+        entity_id: event.ev_alerts
     conditions:
       - condition: template
         value_template: "{{ trigger.to_state.attributes.event_type == 'unlocked' }}"
@@ -191,26 +191,26 @@ To get good estimates, charge to 100 % now and then. Every full charge is one ca
 
 ## Entity reference
 
-Entity IDs follow the pattern `<platform>.ford_ev_<vehicle name>_<entity name>`, for example `sensor.ford_ev_explorer_model_range`. Energy figures are in kWh, distances in km and temperatures in °C. Home Assistant converts distances, temperatures and consumption to your unit system.
+Entity IDs follow the pattern `<platform>.ev_<entity name>`, for example `sensor.ev_model_range`. With several vehicles they include the vehicle name, for example `sensor.ev_explorer_ev_model_range`. Energy figures are in kWh, distances in km and temperatures in °C. Home Assistant converts distances, temperatures and consumption to your unit system.
 
 **Reports**
 
 | Entity | Meaning |
 |---|---|
 | Energy used | Battery energy used, from state-of-charge drops, net of regeneration. Cumulative. |
-| Energy added to battery | Battery energy added, from state-of-charge rises. Cumulative. |
-| Energy delivered by charger | Energy reported by the charger. Cumulative. |
-| Energy delivered by charger at home | The same, at home only. Cumulative. |
+| Energy added | Battery energy added, from state-of-charge rises. Cumulative. |
+| Energy charged | Energy reported by the charger. Cumulative. |
+| Energy charged at home | The same, at home only. Cumulative. |
 | Charging cost | Cost of charging at home. Cumulative. |
 | Distance today / this week / this month | km driven in the period. |
-| Energy used, charger energy, charger energy at home, charging cost: this week / this month | The same figures per period. |
+| Energy used, energy charged, energy charged at home, charging cost: this week / this month | The same figures per period. Attribute: the previous period. |
 | Consumption this week / this month | Energy used per 100 km. Empty below 10 km. |
-| Car estimate, range at 100 % | The car's range scaled to a full battery: a trend of the car's own efficiency figure. |
-| Car estimate, km per % | The car's range per percent of charge. |
+| Car range at 100 % | The car's range scaled to a full battery: a trend of the car's own efficiency figure. |
+| Car km per % | The car's range per percent of charge. |
 | Charging state | Unplugged / plugged in, not charging / charging. |
 | Data age | Minutes since the car last reported. |
 | Last charge | Summary of the last charging session. Its history is the charging log. |
-| Charging session (binary sensor) | On while a charging session is open. |
+| Charging (binary sensor) | On while a charging session is open. |
 
 **Range model**
 
@@ -218,14 +218,14 @@ Entity IDs follow the pattern `<platform>.ford_ev_<vehicle name>_<entity name>`,
 |---|---|
 | Outside temperature | The temperature the model uses. |
 | Model consumption | Predicted kWh/100 km now. The attributes split it into driving and climate. |
-| Model state of charge | Energy in the model battery, in %. Attribute: difference from the car's value. |
+| Model battery level | Energy in the model battery, in %. Attribute: difference from the car's value. |
 | Model range | Range from the model battery at the predicted consumption. |
 | Model range at 100 % | Range of a full battery now. Attribute: a table by outside temperature. |
 | Model range at 100 % tomorrow | The same at tomorrow's forecast temperature. |
-| Range model drive factor / climate factor | The learned factors (1.0 = baseline). |
-| Range model last cycle error | Model prediction vs reality for the last cycle, in %. |
-| Range model calibrations | Number of calibrations used for fitting. Attributes: the current cycle so far. |
-| Last range calibration | Time of the last calibration. Attributes: its details, including the capacity estimate. |
+| Drive factor / Climate factor | The learned factors (1.0 = baseline). |
+| Last cycle error | Model prediction vs reality for the last cycle, in %. |
+| Calibrations | Number of calibrations used for fitting. Attributes: the current cycle so far. |
+| Last calibration | Time of the last calibration. Attributes: its details, including the capacity estimate. |
 
 ## Privacy
 
@@ -238,7 +238,7 @@ Entity IDs follow the pattern `<platform>.ford_ev_<vehicle name>_<entity name>`,
 - FordConnect Query must be set up and show your vehicle.
 - These FordConnect Query entities must be enabled: state of charge, odometer, ignition status, charge status (`evccstatus`) and the device tracker.
 
-**Energy delivered by charger stays at 0:**
+**Energy charged stays at 0:**
 - Some vehicles or regions do not report charger energy. The integration then uses each session's state-of-charge rise instead, so the cost and the range model still work.
 - The first reading after installation is only a baseline and is not counted.
 

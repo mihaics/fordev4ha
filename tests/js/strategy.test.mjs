@@ -25,7 +25,7 @@ function fakeHass(n, { dropFcq = [] } = {}) {
   const devices = {};
   for (let i = 1; i <= n; i++) {
     devices[`dev_fcq_${i}`] = { id: `dev_fcq_${i}`, name: `Car ${i}` };
-    devices[`dev_ev_${i}`] = { id: `dev_ev_${i}`, name: `Ford EV Car ${i}`, via_device_id: `dev_fcq_${i}` };
+    devices[`dev_ev_${i}`] = { id: `dev_ev_${i}`, name: `EV Car ${i}`, via_device_id: `dev_fcq_${i}` };
     for (const key of OURS) {
       const id = `sensor.ford_ev_car_${i}_${key}`;
       entities[id] = { entity_id: id, platform: "ford_ev", device_id: `dev_ev_${i}`, translation_key: key };
@@ -96,4 +96,18 @@ test("no vehicles shows help", () => {
   const d = buildDashboard({ entities: {}, devices: {}, states: {} }, {});
   assert.equal(d.views.length, 1);
   assert.match(JSON.stringify(d), /FordConnect Query/);
+});
+
+test("a device named just EV keeps the title EV", () => {
+  const hass = fakeHass(1);
+  hass.devices.dev_ev_1.name = "EV";
+  assert.equal(findVehicles(hass)[0].name, "EV");
+});
+
+test("settings rows carry short names", () => {
+  const view = buildDashboard(fakeHass(1), {}).views[0];
+  const settings = view.sections.find((s) => s.cards[0].heading === "Settings");
+  for (const card of settings.cards.filter((c) => c.type === "entities")) {
+    for (const row of card.entities) assert.ok(row.name && row.name.length <= 24, JSON.stringify(row));
+  }
 });

@@ -84,13 +84,13 @@
         "name": "Energy used"
       },
       "energy_added": {
-        "name": "Energy added to battery"
+        "name": "Energy added"
       },
       "charger_energy": {
-        "name": "Energy delivered by charger"
+        "name": "Energy charged"
       },
       "charger_energy_home": {
-        "name": "Energy delivered by charger at home"
+        "name": "Energy charged at home"
       },
       "charging_cost": {
         "name": "Charging cost"
@@ -111,16 +111,16 @@
         "name": "Energy used this month"
       },
       "charger_energy_week": {
-        "name": "Charger energy this week"
+        "name": "Energy charged this week"
       },
       "charger_energy_month": {
-        "name": "Charger energy this month"
+        "name": "Energy charged this month"
       },
       "charger_energy_home_week": {
-        "name": "Charger energy at home this week"
+        "name": "Energy charged at home this week"
       },
       "charger_energy_home_month": {
-        "name": "Charger energy at home this month"
+        "name": "Energy charged at home this month"
       },
       "cost_week": {
         "name": "Charging cost this week"
@@ -135,16 +135,16 @@
         "name": "Consumption this month"
       },
       "car_full_range": {
-        "name": "Car estimate, range at 100 %"
+        "name": "Car range at 100 %"
       },
       "car_km_per_percent": {
-        "name": "Car estimate, km per %"
+        "name": "Car km per %"
       },
       "charging_state": {
         "name": "Charging state",
         "state": {
           "unplugged": "Unplugged",
-          "plugged": "Plugged in, not charging",
+          "plugged": "Plugged in",
           "charging": "Charging"
         }
       },
@@ -161,7 +161,7 @@
         "name": "Model consumption"
       },
       "model_soc": {
-        "name": "Model state of charge"
+        "name": "Model battery level"
       },
       "model_range": {
         "name": "Model range"
@@ -173,24 +173,24 @@
         "name": "Model range at 100 % tomorrow"
       },
       "drive_factor": {
-        "name": "Range model drive factor"
+        "name": "Drive factor"
       },
       "climate_factor": {
-        "name": "Range model climate factor"
+        "name": "Climate factor"
       },
       "cycle_error": {
-        "name": "Range model last cycle error"
+        "name": "Last cycle error"
       },
       "calibrations": {
-        "name": "Range model calibrations"
+        "name": "Calibrations"
       },
       "last_calibration": {
-        "name": "Last range calibration"
+        "name": "Last calibration"
       }
     },
     "binary_sensor": {
       "charging_session": {
-        "name": "Charging session"
+        "name": "Charging"
       }
     },
     "number": {
@@ -206,16 +206,16 @@
     },
     "switch": {
       "climate_on": {
-        "name": "Climate on while driving"
+        "name": "Climate while driving"
       },
       "notify_charging": {
-        "name": "Notify charging finished"
+        "name": "Notify charging"
       },
       "notify_unlocked": {
-        "name": "Notify car unlocked"
+        "name": "Notify unlocked"
       },
       "notify_open": {
-        "name": "Notify door or window open"
+        "name": "Notify open door or window"
       },
       "notify_plug_in_reminder": {
         "name": "Notify plug-in reminder"
@@ -224,7 +224,7 @@
         "name": "Notify warning light"
       },
       "notify_data_stale": {
-        "name": "Notify car data stopped"
+        "name": "Notify no data"
       },
       "notify_night_activity": {
         "name": "Notify night activity"
@@ -233,19 +233,19 @@
         "name": "Notify weekly summary"
       },
       "notify_calibration": {
-        "name": "Notify range calibration"
+        "name": "Notify calibration"
       }
     },
     "event": {
       "alert": {
-        "name": "Alert",
+        "name": "Alerts",
         "state_attributes": {
           "event_type": {
             "state": {
-              "unlocked": "Car unlocked",
+              "unlocked": "Unlocked",
               "open": "Door or window open",
               "warning_light": "Warning light",
-              "data_stale": "Car data stopped",
+              "data_stale": "No data",
               "night_activity": "Night activity",
               "plug_in_reminder": "Plug-in reminder"
             }
@@ -253,25 +253,25 @@
         }
       },
       "charging": {
-        "name": "Charging",
+        "name": "Charging events",
         "state_attributes": {
           "event_type": {
             "state": {
-              "session_started": "Session started",
-              "charging_complete": "Charging complete",
-              "charging_stopped_early": "Charging stopped early",
+              "session_started": "Started",
+              "charging_complete": "Complete",
+              "charging_stopped_early": "Stopped early",
               "unplugged_while_charging": "Unplugged while charging"
             }
           }
         }
       },
       "report": {
-        "name": "Report",
+        "name": "Reports",
         "state_attributes": {
           "event_type": {
             "state": {
               "weekly_summary": "Weekly summary",
-              "calibration": "Range calibration"
+              "calibration": "Calibration"
             }
           }
         }
@@ -281,7 +281,7 @@
   "services": {
     "reset_range_model": {
       "name": "Reset range model",
-      "description": "Sets the learned range factors back to their initial values and the model state of charge to the car's. Use it after correcting the battery capacity.",
+      "description": "Resets the learned range factors and sets the model battery level to the car's. Use it after correcting the battery capacity.",
       "fields": {
         "config_entry_id": {
           "name": "Vehicle",

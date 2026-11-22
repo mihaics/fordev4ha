@@ -384,18 +384,18 @@ def _num(value: Any, fmt: str = ".0f") -> str:
 
 
 def build_notification(event_type: str, data: dict[str, Any], currency: str) -> tuple[str, str]:
-    """Title and message for an event."""
+    """Title and message for an event: short and neutral."""
     if event_type in ("charging_complete", "charging_stopped_early"):
         title = "Charging complete" if event_type == "charging_complete" else "Charging stopped early"
         return title, (
             f"{_num(data.get('end_soc'))}% (target {_num(data.get('target'))}%), "
-            f"range {_num(data.get('range_km'))} km. {data.get('summary', '')}"
+            f"{_num(data.get('range_km'))} km. {data.get('summary', '')}"
         )
     if event_type == "unlocked":
         where = "at home" if data.get("location") == "home" else "away from home"
-        message = f"Parked {where} and unlocked for {data.get('delay_min')} min."
+        message = f"Unlocked for {data.get('delay_min')} min, {where}."
         if data.get("doors"):
-            message += f" Unlocked: {', '.join(data['doors'])}."
+            message += f" Doors: {', '.join(data['doors'])}."
         return "Car unlocked", message
     if event_type == "open":
         message = f"Open for {data.get('delay_min')} min."
@@ -405,41 +405,37 @@ def build_notification(event_type: str, data: dict[str, Any], currency: str) -> 
             message += f" Windows: {', '.join(data['windows'])}."
         elif data.get("window_open"):
             message += " Windows: open."
-        return "Car open while parked", message
+        return "Car open", message
     if event_type == "plug_in_reminder":
-        return "Plug in the car", (
-            f"Battery {_num(data.get('soc'))}%, range {_num(data.get('range_km'))} km, not plugged in."
+        return "Plug-in reminder", (
+            f"Battery {_num(data.get('soc'))}%, {_num(data.get('range_km'))} km, not plugged in."
         )
     if event_type == "warning_light":
-        details = ", ".join(data.get("indicators") or []) or "Check the FordPass app for details."
-        return "Car warning light", f"{data.get('count')} active. {details}"
+        message = f"{data.get('count')} active."
+        if data.get("indicators"):
+            message += f" {', '.join(data['indicators'])}."
+        return "Warning light", message
     if event_type == "data_stale":
         hours = data.get("hours")
         if data.get("reason") == "unavailable":
-            return "Car data stopped", (
-                f"Ford integration unavailable for {hours} h - likely an API or login problem "
-                "(check the FordConnect Query integration)."
-            )
+            return "No data from car", f"FordConnect Query unavailable for {hours} h."
         last = dt_util.parse_datetime(str(data.get("last_update") or ""))
         last_txt = last.strftime("%d.%m %H:%M") if last else "unknown"
-        return "Car data stopped", (
-            f"No update from the car for {hours} h (last {last_txt}). "
-            "Car asleep for a long time, or the integration has stopped."
-        )
+        return "No data from car", f"No update for {hours} h, last {last_txt}."
     if event_type == "night_activity":
         if data.get("reason") == "ignition":
-            return "Car activity at night", f"Ignition turned {data.get('state')} at {data.get('time')}."
-        return "Car activity at night", f"Car left home at {data.get('time')}."
+            return "Night activity", f"Ignition {data.get('state')} at {data.get('time')}."
+        return "Night activity", f"Left home at {data.get('time')}."
     if event_type == "weekly_summary":
         message = f"{_num(data.get('km'))} km, {_num(data.get('energy_used'), '.1f')} kWh used"
         if data.get("consumption") is not None:
             message += f" ({_num(data['consumption'], '.1f')} kWh/100 km)"
         message += (
-            f". Charged {_num(data.get('charger_energy'), '.1f')} kWh "
-            f"({_num(data.get('charger_energy_home'), '.1f')} kWh at home, {_num(data.get('cost'), '.2f')} {currency}). "
-            f"Battery now {_num(data.get('soc'))}%."
+            f". Charged {_num(data.get('charger_energy'), '.1f')} kWh, "
+            f"{_num(data.get('charger_energy_home'), '.1f')} kWh at home, "
+            f"cost {_num(data.get('cost'), '.2f')} {currency}. Battery {_num(data.get('soc'))}%."
         )
-        return "Car - this week", message
+        return "Weekly summary", message
     if event_type == "calibration":
-        return "Range model calibrated", str(data.get("summary", ""))
-    return "Ford EV", str(data)
+        return "Range calibrated", str(data.get("summary", ""))
+    return "EV", str(data)

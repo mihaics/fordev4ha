@@ -24,7 +24,8 @@ export function findVehicles(hass) {
         if (e.platform === FCQ_DOMAIN && e.device_id === fcqDeviceId && e.translation_key) fcq[e.translation_key] = e.entity_id;
       }
     }
-    const name = (device.name_by_user || device.name || "Ford EV").replace(/^Ford EV /, "");
+    // Device names are "EV" (one vehicle) or "EV <vehicle name>".
+    const name = (device.name_by_user || device.name || "EV").replace(/^(Ford )?EV (?=.)/, "");
     vehicles.push({ deviceId, name, fcqDeviceId, ours, fcq });
   }
   return vehicles.sort((a, b) => a.name.localeCompare(b.name));
@@ -71,33 +72,44 @@ function entitiesCard(title, rows) {
 }
 
 function rangeMarkdown(o, f) {
-  const soc = f.soc ? `{{ states('${f.soc}') }}` : "?";
+  const num = (id, digits) => `{{ states('${id}') | float(0) | round(${digits}) }}`;
+  const unit = (id) => `{{ state_attr('${id}', 'unit_of_measurement') }}`;
+  const attr = (id, a) => `{{ state_attr('${id}', '${a}') }}`;
+  const carSoc = f.soc ? `, car ${num(f.soc, 0)} %` : "";
   return `{% set cal = states('${o.calibrations}') | int(0) %}{% if cal == 0 %}**Not calibrated yet: charge to 100 % once.**
 
-{% endif %}**Model now**: {{ states('${o.outside_temperature}') }} °C, climate {{ 'on' if is_state('${o.climate_on}', 'on') else 'off' }} at {{ states('${o.climate_setpoint}') }} °C, average speed {{ state_attr('${o.model_consumption}', 'average_speed') }} km/h:
-driving {{ state_attr('${o.model_consumption}', 'driving') }} + climate {{ state_attr('${o.model_consumption}', 'climate') }} ({{ state_attr('${o.model_consumption}', 'climate_kw') }} kW) = **{{ states('${o.model_consumption}') }} kWh/100 km**.
-
-**State of charge**: model {{ states('${o.model_soc}') }} % vs car ${soc} % (difference {{ state_attr('${o.model_soc}', 'difference_vs_car') }}). With the car's SoC the model gives {{ state_attr('${o.model_range}', 'with_car_soc') }} km.
+{% endif %}**Now:** ${num(o.outside_temperature, 1)} ${unit(o.outside_temperature)}, climate {{ 'on' if is_state('${o.climate_on}', 'on') else 'off' }} at ${num(o.climate_setpoint, 1)} ${unit(o.climate_setpoint)}, average ${attr(o.model_consumption, "average_speed")} km/h.
+**Consumption:** ${num(o.model_consumption, 1)} kWh/100 km (driving ${attr(o.model_consumption, "driving")}, climate ${attr(o.model_consumption, "climate")}).
+**Battery level:** model ${num(o.model_soc, 0)} %${carSoc}.
 
 | Outside | Range at 100 % | kWh/100 km |
 |---:|---:|---:|
 {% for r in state_attr('${o.model_range_full}', 'by_temperature') or [] %}| {{ r.t }} °C | {{ r.km }} km | {{ r.kwh100 }} |
 {% endfor %}
-**Calibration**: {{ cal }} done, last {{ as_timestamp(states('${o.last_calibration}'), 0) | timestamp_custom('%d.%m %H:%M') if states('${o.last_calibration}') not in ['unknown', 'unavailable'] else 'never' }}. Drive x{{ states('${o.drive_factor}') }}, climate x{{ states('${o.climate_factor}') }}, last cycle error {{ states('${o.cycle_error}') }} %.
-{% set capest = state_attr('${o.last_calibration}', 'capacity_estimate_kwh') %}{% if capest %}Usable capacity estimate from the last full charge: {{ capest | round(1) }} kWh.{% endif %}
-This cycle: {{ state_attr('${o.calibrations}', 'cycle_km') }} km, charged {{ state_attr('${o.calibrations}', 'cycle_charged_kwh') }} kWh, model used {{ state_attr('${o.calibrations}', 'cycle_model_kwh') }} kWh.
-
-<small>The model resets to full and refits its factors every time the car reaches 100 %.</small>`;
+**Calibrations:** {{ cal }}, last {{ as_timestamp(states('${o.last_calibration}'), 0) | timestamp_custom('%d.%m %H:%M') if states('${o.last_calibration}') not in ['unknown', 'unavailable'] else 'never' }}. Drive x${num(o.drive_factor, 2)}, climate x${num(o.climate_factor, 2)}, last error {{ states('${o.cycle_error}') | float(0) | round(1) if states('${o.cycle_error}') not in ['unknown', 'unavailable'] else '-' }} %.
+{% set capest = state_attr('${o.last_calibration}', 'capacity_estimate_kwh') %}{% if capest %}**Capacity estimate:** {{ capest | round(1) }} kWh.
+{% endif %}**This cycle:** ${attr(o.calibrations, "cycle_km")} km, ${attr(o.calibrations, "cycle_charged_kwh")} kWh charged, model ${attr(o.calibrations, "cycle_model_kwh")} kWh.`;
 }
 
 function chargingMarkdown(o) {
-  return `**Last session**: {{ states('${o.last_charge}') if states('${o.last_charge}') not in ['unknown', 'unavailable'] else 'none yet' }}`;
+  return `**Last charge:** {{ states('${o.last_charge}') if states('${o.last_charge}') not in ['unknown', 'unavailable'] else 'none yet' }}`;
 }
 
-const NOTIFY_KEYS = [
-  "charging", "unlocked", "open", "plug_in_reminder", "warning_light",
-  "data_stale", "night_activity", "weekly_summary", "calibration",
+const NOTIFY_ROWS = [
+  ["charging", "Charging"],
+  ["unlocked", "Unlocked"],
+  ["open", "Door or window open"],
+  ["plug_in_reminder", "Plug-in reminder"],
+  ["warning_light", "Warning light"],
+  ["data_stale", "No data"],
+  ["night_activity", "Night activity"],
+  ["weekly_summary", "Weekly summary"],
+  ["calibration", "Calibration"],
 ];
+
+function row(entity, name) {
+  return entity ? { entity, name } : null;
+}
 
 export function buildView(vehicle) {
   const o = vehicle.ours;
@@ -122,10 +134,10 @@ export function buildView(vehicle) {
       tile(o.distance_month, "km this month"),
       tile(o.consumption_week, "kWh/100 km week"),
       tile(o.consumption_month, "kWh/100 km month"),
-      tile(o.car_full_range, "Car estimate at 100 %"),
+      tile(o.car_full_range, "Car range at 100 %"),
       statistics("km per day", [f.odometer], "change", "day", 30, "bar"),
       statistics("Energy used per week (kWh)", [o.energy_used], "change", "week", 90, "bar"),
-      statistics("Car estimate at 100 % (efficiency trend)", [o.car_full_range], "mean", "day", 90, "line"),
+      statistics("Car range at 100 %", [o.car_full_range], "mean", "day", 90, "line"),
       history("Battery", [f.soc]),
     ]),
     section("Range estimate", [
@@ -146,7 +158,7 @@ export function buildView(vehicle) {
         o.model_soc ? { entity: o.model_soc, name: "Model" } : null,
       ]),
       o.model_consumption ? { type: "markdown", content: rangeMarkdown(o, f) } : null,
-      statistics("Range at 100 %: model vs car (daily mean)", [
+      statistics("Range at 100 %: model vs car", [
         o.model_range_full ? { entity: o.model_range_full, name: "Model" } : null,
         o.car_full_range ? { entity: o.car_full_range, name: "Car" } : null,
       ], "mean", "day", 90, "line"),
@@ -161,7 +173,7 @@ export function buildView(vehicle) {
       tile(o.charger_energy_home_month, "Charged at home, month"),
       tile(o.cost_month, "Cost this month"),
       tile(o.cost_week, "Cost this week"),
-      tile(o.charging_session, "Session active"),
+      tile(o.charging_session, "Charging"),
       o.last_charge ? { type: "markdown", content: chargingMarkdown(o) } : null,
       o.last_charge ? { type: "logbook", title: "Charging log", entities: [o.last_charge], hours_to_show: 24 * 30 } : null,
       statistics("Energy charged per month (kWh)", [
@@ -170,8 +182,13 @@ export function buildView(vehicle) {
       ], "change", "month", 365, "bar"),
     ]),
     section("Settings", [
-      entitiesCard("Range model", [o.climate_on, o.climate_setpoint, o.charge_target, o.plug_in_reminder_soc]),
-      entitiesCard("Notifications", NOTIFY_KEYS.map((k) => o[`notify_${k}`])),
+      entitiesCard("Settings", [
+        row(o.climate_on, "Climate while driving"),
+        row(o.climate_setpoint, "Climate setpoint"),
+        row(o.charge_target, "Charge target"),
+        row(o.plug_in_reminder_soc, "Plug-in reminder below"),
+      ]),
+      entitiesCard("Notifications", NOTIFY_ROWS.map(([key, name]) => row(o[`notify_${key}`], name))),
     ]),
   ];
   return { title: vehicle.name, path: slug(vehicle.name), type: "sections", max_columns: 4, sections };
@@ -190,8 +207,8 @@ export function buildDashboard(hass, config = {}) {
             {
               type: "markdown",
               content:
-                "No Ford EV vehicle found. Install FordConnect Query, then add the **Ford EV** integration " +
-                `under Settings > Devices & services. Documentation: ${DOCS}`,
+                "No vehicle found. Install FordConnect Query, then add the **Ford EV** integration " +
+                `in Settings > Devices & services. Documentation: ${DOCS}`,
             },
           ],
         },

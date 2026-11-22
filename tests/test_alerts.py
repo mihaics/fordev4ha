@@ -93,7 +93,7 @@ async def test_open_lists_windows(hass, fcq, freezer):
     await async_setup_ford_ev(hass, fcq, options=OPTS)
     await fcq.set("windowposition", "Open", {"frontLeft": {"doubleRange": {"upperBound": 10}}, "rearLeft": {"doubleRange": {"upperBound": 0}}})
     await advance(hass, freezer, 601)
-    assert titles(calls) == ["Car open while parked"]
+    assert titles(calls) == ["Car open"]
     assert "frontLeft" in calls[0].data["message"]
     assert "rearLeft" not in calls[0].data["message"]
 
@@ -113,7 +113,7 @@ async def test_warning_light_on_increase_only(hass, fcq):
     await fcq.set("indicators", "1", {"tirePressure": True, "oilLife": False})
     await fcq.set("indicators", "0")
     await fcq.set("indicators", "1", {"tirePressure": True})
-    assert titles(calls) == ["Car warning light", "Car warning light"]
+    assert titles(calls) == ["Warning light", "Warning light"]
     assert "tirePressure" in calls[0].data["message"]
     assert "oilLife" not in calls[0].data["message"]
 
@@ -123,7 +123,7 @@ async def test_night_activity_window_wraps(hass, fcq, freezer):
     freezer.move_to(at_local(23, 30))
     await async_setup_ford_ev(hass, fcq, options={**OPTS, "night_start": "22:00:00", "night_end": "06:00:00"})
     await fcq.set("ignitionstatus", "ON")
-    assert titles(calls) == ["Car activity at night"]
+    assert titles(calls) == ["Night activity"]
     extra = calls[0].data["data"]
     assert extra["priority"] == "high" and extra["channel"] == "Car alert" and extra["ttl"] == 0
 
@@ -142,7 +142,7 @@ async def test_night_activity_left_home(hass, fcq, freezer):
     freezer.move_to(at_local(3, 0))
     await async_setup_ford_ev(hass, fcq, options=OPTS)
     await fcq.set("tracker", "not_home")
-    assert "Car left home" in calls[0].data["message"]
+    assert calls[0].data["message"].startswith("Left home at ")
 
 
 async def test_plug_in_reminder(hass, fcq, freezer):
@@ -151,7 +151,7 @@ async def test_plug_in_reminder(hass, fcq, freezer):
     await async_setup_ford_ev(hass, fcq, options=OPTS)
     await fcq.set("soc", "30")
     await advance(hass, freezer, 15)
-    assert titles(calls) == ["Plug in the car"]
+    assert titles(calls) == ["Plug-in reminder"]
     assert "30%" in calls[0].data["message"]
 
 
@@ -172,7 +172,7 @@ async def test_weekly_summary_sunday(hass, fcq, freezer):
     await fcq.set("odometer", "1100")
     await fcq.set("soc", "35")
     await advance(hass, freezer, 15)
-    assert titles(calls) == ["Car - this week"]
+    assert titles(calls) == ["Weekly summary"]
     message = calls[0].data["message"]
     assert "100 km" in message and "9.0 kWh used" in message and "9.0 kWh/100 km" in message
 
@@ -190,7 +190,7 @@ async def test_data_stale_unavailable(hass, fcq, freezer):
     await async_setup_ford_ev(hass, fcq, options=OPTS)
     await fcq.set("soc", "unavailable")
     await advance(hass, freezer, 2 * 3600 + 1)
-    assert titles(calls) == ["Car data stopped"]
+    assert titles(calls) == ["No data from car"]
     assert "unavailable for 2 h" in calls[0].data["message"]
 
 
@@ -199,7 +199,7 @@ async def test_data_stale_no_update(hass, fcq, freezer):
     await fcq.set("lastrefresh", (dt_util.utcnow() - timedelta(hours=49)).isoformat())
     await async_setup_ford_ev(hass, fcq, options=OPTS)
     await advance(hass, freezer, 601)
-    assert titles(calls) == ["Car data stopped"]
+    assert titles(calls) == ["No data from car"]
     await advance(hass, freezer, 601)
     assert len(calls) == 1
 
@@ -237,7 +237,7 @@ async def test_notify_entity_target(hass, fcq):
     await async_setup_ford_ev(hass, fcq, options={"notify_entities": ["notify.kitchen_display"]})
     await fcq.set("indicators", "1")
     assert calls[0].data["entity_id"] == ["notify.kitchen_display"]
-    assert calls[0].data["title"] == "Car warning light"
+    assert calls[0].data["title"] == "Warning light"
 
 
 async def test_mobile_app_extras(hass, fcq, freezer):
@@ -272,4 +272,27 @@ async def test_calibration_notification_off_by_default(hass, fcq):
     entry.runtime_data.engine.set_setting("notify.calibration", True)
     entry.runtime_data.engine.emit("report", "calibration", {"summary": "300 km"})
     await hass.async_block_till_done()
-    assert titles(calls) == ["Range model calibrated"]
+    assert titles(calls) == ["Range calibrated"]
+
+
+def test_notification_texts_are_short():
+    from custom_components.ford_ev.alerts import build_notification
+
+    cases = {
+        "unlocked": {"location": "home", "doors": ["frontLeft"], "delay_min": 10},
+        "open": {"doors": [], "windows": ["rearLeft"], "window_open": True, "delay_min": 10},
+        "plug_in_reminder": {"soc": 30.0, "range_km": 120.0},
+        "warning_light": {"count": 1, "indicators": []},
+        "data_stale": {"reason": "unavailable", "hours": 2, "last_update": None},
+        "night_activity": {"reason": "ignition", "state": "ON", "time": "02:13"},
+    }
+    expected = {
+        "unlocked": ("Car unlocked", "Unlocked for 10 min, at home. Doors: frontLeft."),
+        "open": ("Car open", "Open for 10 min. Windows: rearLeft."),
+        "plug_in_reminder": ("Plug-in reminder", "Battery 30%, 120 km, not plugged in."),
+        "warning_light": ("Warning light", "1 active."),
+        "data_stale": ("No data from car", "FordConnect Query unavailable for 2 h."),
+        "night_activity": ("Night activity", "Ignition ON at 02:13."),
+    }
+    for event_type, data in cases.items():
+        assert build_notification(event_type, data, "EUR") == expected[event_type]

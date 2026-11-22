@@ -68,10 +68,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: FordEvConfigEntry) -> bo
     if vehicle is None:
         raise ConfigEntryNotReady("FordConnect Query vehicle not found")
 
+    # "EV" keeps entity names short; with several vehicles the car's name tells them apart.
+    several = any(e.entry_id != entry.entry_id for e in hass.config_entries.async_entries(DOMAIN))
     dr.async_get(hass).async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, vehicle.vin)},
-        name=f"Ford EV {vehicle.name}",
+        name=f"EV {vehicle.name}" if several else "EV",
         model="Ford EV",
         via_device_id=vehicle.device_id,
     )
