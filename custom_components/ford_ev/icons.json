@@ -2,6 +2,9 @@
   "entity": {
     "sensor": {
       "charging_cost": {"default": "mdi:cash"},
+      "charging_cost_home": {"default": "mdi:home-lightning-bolt-outline"},
+      "charging_cost_public": {"default": "mdi:ev-station"},
+      "charger_energy_solar": {"default": "mdi:solar-power"},
       "cost_week": {"default": "mdi:cash"},
       "cost_month": {"default": "mdi:cash"},
       "consumption_week": {"default": "mdi:speedometer"},
@@ -39,5 +42,8 @@
       "notify_weekly_summary": {"default": "mdi:bell-outline"},
       "notify_calibration": {"default": "mdi:bell-outline"}
     }
+  },
+  "services": {
+    "add_charge": {"service": "mdi:ev-plug-type2"}
   }
 }

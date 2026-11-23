@@ -231,8 +231,15 @@ SENSORS: tuple[FordEvSensorDescription, ...] = (
     _total("energy_added", lambda e: e.state.soc.energy_added),
     _total("charger_energy", lambda e: e.state.charger_energy),
     _total("charger_energy_home", lambda e: e.state.charger_energy_home),
+    _total("charger_energy_solar", lambda e: e.state.charger_energy_solar),
     FordEvSensorDescription(
         key="charging_cost", value_fn=lambda e: e.state.cost, state_class=SensorStateClass.TOTAL, **_MONEY
+    ),
+    FordEvSensorDescription(
+        key="charging_cost_home", value_fn=lambda e: e.state.cost_home, state_class=SensorStateClass.TOTAL, **_MONEY
+    ),
+    FordEvSensorDescription(
+        key="charging_cost_public", value_fn=lambda e: e.state.cost_public, state_class=SensorStateClass.TOTAL, **_MONEY
     ),
     _period_sensor("distance_day", "day", "odometer", _KM),
     _period_sensor("distance_week", "week", "odometer", _KM),

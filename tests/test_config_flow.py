@@ -108,3 +108,37 @@ async def test_options_flow_requires_temperature_source(hass, fcq):
     r = await hass.config_entries.options.async_init(entry.entry_id)
     r = await hass.config_entries.options.async_configure(r["flow_id"], {"battery_kwh": 60})
     assert r["errors"] == {"base": "temperature_source_required"}
+
+
+async def test_options_flow_saves_cost_settings(hass, fcq):
+    _outside(hass)
+    hass.states.async_set("sensor.pv", "100", {"unit_of_measurement": "W", "device_class": "power"})
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=VIN,
+        data={"vin": VIN, "device_id": fcq.device_id, "battery_kwh": 60, "temperature_sensor": "sensor.outside", "weather_entity": None},
+        options={"public_price_fixed": 3.0, "solar_price_fixed": 0.5},
+    )
+    entry.add_to_hass(hass)
+    with patch(SETUP, return_value=True):
+        r = await hass.config_entries.options.async_init(entry.entry_id)
+        r = await hass.config_entries.options.async_configure(
+            r["flow_id"],
+            {
+                "public_price_fixed": 2.55,
+                "solar_power_entity": "sensor.pv",
+                "base_load_w": 400,
+                "ac_loss_pct": 9,
+                "dc_loss_pct": 4.5,
+                "battery_kwh": 60,
+                "temperature_sensor": "sensor.outside",
+            },
+        )
+        await hass.async_block_till_done()
+    assert r["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["public_price_fixed"] == 2.55
+    assert entry.options["solar_power_entity"] == "sensor.pv"
+    assert entry.options["base_load_w"] == 400
+    assert (entry.options["ac_loss_pct"], entry.options["dc_loss_pct"]) == (9, 4.5)
+    # A cleared optional field is stored as None, not kept from before.
+    assert entry.options["solar_price_fixed"] is None

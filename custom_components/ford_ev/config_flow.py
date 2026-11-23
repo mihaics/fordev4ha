@@ -10,9 +10,12 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 
 from .const import (
+    CONF_AC_LOSS_PCT,
     CONF_ALERT_DELAY_MIN,
+    CONF_BASE_LOAD_W,
     CONF_BATTERY_KWH,
     CONF_DASHBOARD_PATH,
+    CONF_DC_LOSS_PCT,
     CONF_DEVICE_ID,
     CONF_NIGHT_END,
     CONF_NIGHT_START,
@@ -20,7 +23,12 @@ from .const import (
     CONF_NOTIFY_SERVICES,
     CONF_PRICE_ENTITY,
     CONF_PRICE_FIXED,
+    CONF_PUBLIC_PRICE_ENTITY,
+    CONF_PUBLIC_PRICE_FIXED,
     CONF_REMINDER_TIME,
+    CONF_SOLAR_POWER_ENTITY,
+    CONF_SOLAR_PRICE_ENTITY,
+    CONF_SOLAR_PRICE_FIXED,
     CONF_STALE_NO_UPDATE_H,
     CONF_STALE_UNAVAILABLE_H,
     CONF_TEMPERATURE_SENSOR,
@@ -43,6 +51,27 @@ _BATTERY = selector.NumberSelector(
 _TEMPERATURE = selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor", device_class="temperature"))
 _WEATHER = selector.EntitySelector(selector.EntitySelectorConfig(domain="weather"))
 _TIME = selector.TimeSelector()
+_PRICE_ENTITY = selector.EntitySelector(selector.EntitySelectorConfig(domain=["sensor", "input_number"]))
+_PRICE = selector.NumberSelector(selector.NumberSelectorConfig(min=0, max=100, step="any", mode=selector.NumberSelectorMode.BOX))
+_LOSS = selector.NumberSelector(
+    selector.NumberSelectorConfig(min=0, max=50, step=0.5, unit_of_measurement="%", mode=selector.NumberSelectorMode.BOX)
+)
+# Optional fields that must be stored as None when cleared, so a cleared field does not fall back to an old value.
+_CLEARABLE = (
+    CONF_TEMPERATURE_SENSOR,
+    CONF_WEATHER_ENTITY,
+    CONF_PRICE_ENTITY,
+    CONF_PRICE_FIXED,
+    CONF_PUBLIC_PRICE_ENTITY,
+    CONF_PUBLIC_PRICE_FIXED,
+    CONF_SOLAR_POWER_ENTITY,
+    CONF_SOLAR_PRICE_ENTITY,
+    CONF_SOLAR_PRICE_FIXED,
+)
+
+
+def _suggested(key: str, current: dict[str, Any]) -> vol.Optional:
+    return vol.Optional(key, description={"suggested_value": current[key]})
 
 
 def _temperature_fields(defaults: dict[str, Any]) -> dict[Any, Any]:
@@ -138,7 +167,7 @@ class FordEvOptionsFlow(OptionsFlowWithReload):
         if user_input is not None:
             if _has_temperature_source(user_input):
                 data = dict(user_input)
-                for key in (CONF_TEMPERATURE_SENSOR, CONF_WEATHER_ENTITY, CONF_PRICE_ENTITY, CONF_PRICE_FIXED):
+                for key in _CLEARABLE:
                     data.setdefault(key, None)
                 data.setdefault(CONF_DASHBOARD_PATH, "")
                 return self.async_create_entry(data=data)
@@ -157,14 +186,20 @@ class FordEvOptionsFlow(OptionsFlowWithReload):
                 vol.Optional(
                     CONF_DASHBOARD_PATH, description={"suggested_value": current[CONF_DASHBOARD_PATH]}
                 ): selector.TextSelector(),
-                vol.Optional(
-                    CONF_PRICE_ENTITY, description={"suggested_value": current[CONF_PRICE_ENTITY]}
-                ): selector.EntitySelector(selector.EntitySelectorConfig(domain=["sensor", "input_number"])),
-                vol.Optional(
-                    CONF_PRICE_FIXED, description={"suggested_value": current[CONF_PRICE_FIXED]}
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=0, max=100, step="any", mode=selector.NumberSelectorMode.BOX)
+                _suggested(CONF_PRICE_ENTITY, current): _PRICE_ENTITY,
+                _suggested(CONF_PRICE_FIXED, current): _PRICE,
+                _suggested(CONF_PUBLIC_PRICE_ENTITY, current): _PRICE_ENTITY,
+                _suggested(CONF_PUBLIC_PRICE_FIXED, current): _PRICE,
+                _suggested(CONF_SOLAR_POWER_ENTITY, current): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="sensor", device_class="power")
                 ),
+                _suggested(CONF_SOLAR_PRICE_ENTITY, current): _PRICE_ENTITY,
+                _suggested(CONF_SOLAR_PRICE_FIXED, current): _PRICE,
+                vol.Required(CONF_BASE_LOAD_W, default=current[CONF_BASE_LOAD_W]): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=0, max=10000, step=10, unit_of_measurement="W", mode=selector.NumberSelectorMode.BOX)
+                ),
+                vol.Required(CONF_AC_LOSS_PCT, default=current[CONF_AC_LOSS_PCT]): _LOSS,
+                vol.Required(CONF_DC_LOSS_PCT, default=current[CONF_DC_LOSS_PCT]): _LOSS,
                 vol.Required(CONF_ALERT_DELAY_MIN, default=current[CONF_ALERT_DELAY_MIN]): selector.NumberSelector(
                     selector.NumberSelectorConfig(min=1, max=120, step=1, unit_of_measurement="min", mode=selector.NumberSelectorMode.BOX)
                 ),

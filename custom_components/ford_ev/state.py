@@ -50,7 +50,12 @@ class EngineState:
     charger_last_reading: float | None = None
     charger_energy: float = 0.0
     charger_energy_home: float = 0.0
+    charger_energy_solar: float = 0.0
+    charger_last_ts: float | None = None
+    # cost is the total; it always equals cost_home + cost_public.
     cost: float = 0.0
+    cost_home: float = 0.0
+    cost_public: float = 0.0
     session: ChargingSession | None = None
     pending_session_end: dict[str, Any] | None = None
     last_session: dict[str, Any] | None = None
@@ -74,7 +79,10 @@ class EngineState:
     def from_dict(cls, data: dict[str, Any]) -> EngineState:
         """Rebuild from stored data, ignoring unknown keys and defaulting missing ones."""
         st = _build(cls, data)
-        st.soc = _build(SocAccountingState, data.get("soc") or {})
+        if "cost_home" not in data:
+            # Before 0.2.0 only charging at home was priced.
+            st.cost_home = st.cost
+        st.soc =_build(SocAccountingState, data.get("soc") or {})
         st.model = _build(RangeModelState, data.get("model") or {})
         settings = _build(Settings, data.get("settings") or {})
         settings.notify = {**_default_notify(), **(settings.notify or {})}

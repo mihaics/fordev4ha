@@ -77,6 +77,12 @@ Open **Settings > Devices & services > Ford EV > Configure**. The integration re
 | Dashboard path | empty | Opened when a phone notification is tapped, for example `/dashboard-ford-ev`. |
 | Electricity price entity | none | A sensor or input number holding the price per kWh in your currency. Takes precedence over the fixed price. |
 | Fixed electricity price | none | Price per kWh, used when no price entity is set. |
+| Public charging price entity / fixed public charging price | none | Price per kWh away from home, as entity or fixed value. Without one, charging away from home costs nothing. |
+| Solar power sensor | none | Current solar production (W or kW). When set, solar power above the house base load covers home charging first. A forecast sensor, such as Forecast.Solar's power now, works as an estimate. |
+| Solar kWh price entity / fixed solar kWh price | none (0) | What a solar kWh used for charging is worth to you, for example what exporting it would have earned. |
+| House base load | 300 W | Solar power the house uses before the car gets any. |
+| AC charging losses | 10 % | Energy the meter bills above what the car reports on AC: the car reports energy after its onboard charger, while the wall meter also sees the onboard charger's, wallbox's and cable's losses. |
+| DC charging losses | 5 % | The same on DC. |
 | Unlocked / open alert delay | 10 min | How long the car must stay unlocked, or a door or window open, before you are notified. |
 | Plug-in reminder time | 21:00 | When to check whether the car needs plugging in. |
 | Night window start / end | 00:00 / 06:00 | When ignition or leaving home counts as night activity. The window may span midnight, for example 22:00 to 06:00. |
@@ -95,7 +101,19 @@ Settings you may change day to day are entities on the device, so they also appe
 | Plug-in reminder below | 40 % | The plug-in reminder is sent only below this state of charge. |
 | Notify … (9 switches) | on, except calibration | Turns each notification type on or off. |
 
-Charging is priced only at home, meaning the car's tracker is in the `home` zone. Each kWh is priced at the moment it is counted, so time-of-use and dynamic tariffs are handled correctly.
+### How charging cost is estimated
+
+Each kWh the car reports is priced at the moment it is counted, so time-of-use and dynamic tariffs are handled correctly.
+
+1. **Losses.** The billed energy is the reported energy plus the AC or DC losses, chosen by the charging type the car reports.
+2. **Location.** At home (the car's tracker is in the `home` zone) the electricity price applies; anywhere else, the public charging price.
+3. **Solar, at home only.** With a solar power sensor, the solar power above the house base load since the previous reading covers the billed energy first and is priced at the solar kWh price; the rest is priced at the electricity price.
+
+The result is an estimate: the car reports energy in 0.5 kWh steps, and a forecast sensor is not a meter. Use **Add a past charge** to correct it with an invoice amount.
+
+### Adding past charges
+
+The **Add a past charge** action (`ford_ev.add_charge`) counts a charge the integration did not see, for example before it was installed. It takes the date, the energy as the car or its app reports it, home or public, and optionally the charging type, the solar share and the amount actually paid. The charge goes into the lifetime totals and into the week and month it belongs to; periods that started later do not change. The range model is not affected. To price a charge that is already counted, for example a public charge from its invoice, use energy 0 and the cost.
 
 ## Dashboard
 
@@ -203,7 +221,9 @@ Entity IDs follow the pattern `<platform>.ev_<entity name>`, for example `sensor
 | Energy added | Battery energy added, from state-of-charge rises. Cumulative. |
 | Energy charged | Energy reported by the charger. Cumulative. |
 | Energy charged at home | The same, at home only. Cumulative. |
-| Charging cost | Cost of charging at home. Cumulative. |
+| Energy charged from solar | Estimated billed energy covered by solar at home. Cumulative. |
+| Charging cost | Cost of all charging, home and public. Cumulative. |
+| Charging cost at home / Public charging cost | The same, split by location. Cumulative. |
 | Distance today / this week / this month | km driven in the period. |
 | Energy used, energy charged, energy charged at home, charging cost: this week / this month | The same figures per period. Attribute: the previous period. |
 | Consumption this week / this month | Energy used per 100 km. Empty below 10 km. |

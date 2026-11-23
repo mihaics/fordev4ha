@@ -61,6 +61,29 @@ def apply_soc_change(
     return replace(st, last_soc=new_soc)
 
 
+@dataclass(frozen=True)
+class ChargeCost:
+    """Price of energy the car reports as charged."""
+
+    billed_kwh: float
+    solar_kwh: float
+    cost: float
+
+
+def price_charge(
+    kwh: float, loss_pct: float, price: float, solar_kwh_available: float = 0.0, solar_price: float = 0.0
+) -> ChargeCost:
+    """Cost of kwh reported by the car.
+
+    The meter that bills the energy sees more than the car reports (charger and cable losses), so
+    the billed energy is kwh plus loss_pct. Solar energy available at the time covers it first, at
+    solar_price; the rest is priced at price.
+    """
+    billed = kwh * (1 + loss_pct / 100)
+    solar = min(billed, max(solar_kwh_available, 0.0))
+    return ChargeCost(billed, solar, (billed - solar) * price + solar * solar_price)
+
+
 def charger_increment(last_reading: float | None, reading: float) -> float:
     """kWh to add for a new chargerEnergyOutput reading.
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime
 from pathlib import Path
 
 import voluptuous as vol
@@ -14,6 +15,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 from homeassistant.helpers import config_validation as cv, device_registry as dr
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.util import dt as dt_util
 
 from .alerts import AlertManager
 from .const import CONF_DEVICE_ID, CONF_VIN, DOMAIN, VERSION, merged_config
@@ -23,7 +25,14 @@ from .engine import FordEvConfigEntry, FordEvEngine, FordEvRuntime
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.EVENT, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 SERVICE_RESET_RANGE_MODEL = "reset_range_model"
+SERVICE_ADD_CHARGE = "add_charge"
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
+ATTR_DATE = "date"
+ATTR_ENERGY_KWH = "energy_kwh"
+ATTR_LOCATION = "location"
+ATTR_CHARGING_TYPE = "charging_type"
+ATTR_SOLAR_SHARE = "solar_share"
+ATTR_COST = "cost"
 STRATEGY_URL = f"/{DOMAIN}/ford-ev-strategy.js"
 STRATEGY_FILE = Path(__file__).parent / "frontend" / "ford-ev-strategy.js"
 
@@ -40,7 +49,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         digest = await hass.async_add_executor_job(_strategy_digest)
         add_extra_js_url(hass, f"{STRATEGY_URL}?v={VERSION}-{digest}")
 
-    async def reset_range_model(call: ServiceCall) -> None:
+    def engine_for(call: ServiceCall) -> FordEvEngine:
         loaded = [e for e in hass.config_entries.async_entries(DOMAIN) if e.state is ConfigEntryState.LOADED]
         entry_id = call.data.get(ATTR_CONFIG_ENTRY_ID)
         if entry_id:
@@ -51,13 +60,50 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             entry = loaded[0]
         else:
             raise ServiceValidationError("Several vehicles are set up: choose one with config_entry_id")
-        entry.runtime_data.engine.reset_range_model()
+        return entry.runtime_data.engine
+
+    async def reset_range_model(call: ServiceCall) -> None:
+        engine_for(call).reset_range_model()
+
+    async def add_charge(call: ServiceCall) -> None:
+        engine = engine_for(call)
+        when: datetime = call.data[ATTR_DATE]
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=dt_util.get_default_time_zone())
+        if when > dt_util.now():
+            raise ServiceValidationError("The charge date is in the future")
+        home = call.data[ATTR_LOCATION] == "home"
+        charging_type = call.data.get(ATTR_CHARGING_TYPE, "ac" if home else "dc")
+        engine.add_past_charge(
+            when,
+            call.data[ATTR_ENERGY_KWH],
+            home=home,
+            dc=charging_type == "dc",
+            solar_share=call.data.get(ATTR_SOLAR_SHARE, 0.0) if home else 0.0,
+            cost=call.data.get(ATTR_COST),
+        )
 
     hass.services.async_register(
         DOMAIN,
         SERVICE_RESET_RANGE_MODEL,
         reset_range_model,
         schema=vol.Schema({vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string}),
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ADD_CHARGE,
+        add_charge,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string,
+                vol.Required(ATTR_DATE): cv.datetime,
+                vol.Required(ATTR_ENERGY_KWH): vol.All(vol.Coerce(float), vol.Range(min=0, max=500)),
+                vol.Required(ATTR_LOCATION): vol.In(["home", "public"]),
+                vol.Optional(ATTR_CHARGING_TYPE): vol.In(["ac", "dc"]),
+                vol.Optional(ATTR_SOLAR_SHARE): vol.All(vol.Coerce(float), vol.Range(min=0, max=1)),
+                vol.Optional(ATTR_COST): vol.All(vol.Coerce(float), vol.Range(min=0)),
+            }
+        ),
     )
     return True
 

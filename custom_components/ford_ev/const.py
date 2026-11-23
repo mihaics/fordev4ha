@@ -22,6 +22,14 @@ CONF_NOTIFY_ENTITIES = "notify_entities"
 CONF_DASHBOARD_PATH = "dashboard_path"
 CONF_PRICE_ENTITY = "price_entity"
 CONF_PRICE_FIXED = "price_fixed"
+CONF_PUBLIC_PRICE_ENTITY = "public_price_entity"
+CONF_PUBLIC_PRICE_FIXED = "public_price_fixed"
+CONF_SOLAR_POWER_ENTITY = "solar_power_entity"
+CONF_SOLAR_PRICE_ENTITY = "solar_price_entity"
+CONF_SOLAR_PRICE_FIXED = "solar_price_fixed"
+CONF_BASE_LOAD_W = "base_load_w"
+CONF_AC_LOSS_PCT = "ac_loss_pct"
+CONF_DC_LOSS_PCT = "dc_loss_pct"
 CONF_ALERT_DELAY_MIN = "alert_delay_min"
 CONF_REMINDER_TIME = "reminder_time"
 CONF_NIGHT_START = "night_start"
@@ -39,6 +47,14 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     CONF_DASHBOARD_PATH: "",
     CONF_PRICE_ENTITY: None,
     CONF_PRICE_FIXED: None,
+    CONF_PUBLIC_PRICE_ENTITY: None,
+    CONF_PUBLIC_PRICE_FIXED: None,
+    CONF_SOLAR_POWER_ENTITY: None,
+    CONF_SOLAR_PRICE_ENTITY: None,
+    CONF_SOLAR_PRICE_FIXED: None,
+    CONF_BASE_LOAD_W: 300,
+    CONF_AC_LOSS_PCT: 10,
+    CONF_DC_LOSS_PCT: 5,
     CONF_ALERT_DELAY_MIN: 10,
     CONF_REMINDER_TIME: "21:00:00",
     CONF_NIGHT_START: "00:00:00",

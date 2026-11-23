@@ -49,12 +49,13 @@ async def test_charger_energy_and_cost_at_home(hass, fcq):
     st = engine_of(entry).state
     assert st.charger_energy == pytest.approx(4.0)
     assert st.charger_energy_home == pytest.approx(4.0)
-    assert st.cost == pytest.approx(1.20)
+    # 4.0 kWh reported plus the default 10 % AC losses.
+    assert st.cost == pytest.approx(4.0 * 1.1 * 0.30)
 
 
 async def test_price_entity_takes_precedence(hass, fcq):
     hass.states.async_set("input_number.price", "0.5")
-    entry = await async_setup_ford_ev(hass, fcq, options={"price_fixed": 0.30, "price_entity": "input_number.price"})
+    entry = await async_setup_ford_ev(hass, fcq, options={"price_fixed": 0.30, "price_entity": "input_number.price", "ac_loss_pct": 0})
     for reading in (0.5, 2.5):
         await fcq.set("elvehcharging", "CHARGING", {"chargerEnergyOutput": reading})
     assert engine_of(entry).state.cost == pytest.approx(1.0)
@@ -108,7 +109,7 @@ async def test_session_stopped_early(hass, fcq, freezer):
 
 
 async def test_session_cost_in_summary(hass, fcq, freezer):
-    entry = await async_setup_ford_ev(hass, fcq, options={"price_fixed": 0.25})
+    entry = await async_setup_ford_ev(hass, fcq, options={"price_fixed": 0.25, "ac_loss_pct": 0})
     got = capture(hass, entry.entry_id)
     await _charge(fcq, 100, 30.5)
     await fcq.set("evccstatus", "B")

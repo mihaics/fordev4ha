@@ -9,29 +9,38 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.const import ATTR_UNIT_OF_MEASUREMENT, STATE_UNAVAILABLE, STATE_UNKNOWN, UnitOfPower
 from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, HomeAssistant, State, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event, async_track_time_change
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
+from homeassistant.util.unit_conversion import PowerConverter
 
-from .accounting import apply_soc_change, charger_increment
+from .accounting import apply_soc_change, charger_increment, price_charge
 from .const import (
+    CONF_AC_LOSS_PCT,
+    CONF_BASE_LOAD_W,
     CONF_BATTERY_KWH,
+    CONF_DC_LOSS_PCT,
     CONF_PRICE_ENTITY,
     CONF_PRICE_FIXED,
+    CONF_PUBLIC_PRICE_ENTITY,
+    CONF_PUBLIC_PRICE_FIXED,
+    CONF_SOLAR_POWER_ENTITY,
+    CONF_SOLAR_PRICE_ENTITY,
+    CONF_SOLAR_PRICE_FIXED,
     CONF_TEMPERATURE_SENSOR,
     CONF_WEATHER_ENTITY,
     DOMAIN,
     merged_config,
 )
 from .discovery import FcqVehicle
-from .periods import roll_periods
+from .periods import PERIODS, period_start, roll_periods
 from .range_model import (
     FALLBACK_TEMP_C,
     SOC_FULL,
@@ -54,6 +63,8 @@ TRIP_END_DELAY_S = 120
 CALIBRATION_DELAY_S = 300
 LAST_SESSION_MAX_AGE = timedelta(hours=1)
 SAVE_DELAY_S = 10
+# Longest stretch of solar production credited to one charger reading.
+SOLAR_WINDOW_MAX_S = 7200
 # "Unsupported" is a transient FCQ value; it must not overwrite the last real value.
 _INVALID = (STATE_UNKNOWN, STATE_UNAVAILABLE, "Unsupported")
 
@@ -187,15 +198,46 @@ class FordEvEngine:
         soc = state_number(self.fcq_state("soc"))
         return soc if soc is not None else self.state.soc.last_soc
 
-    def price(self) -> float | None:
-        """Electricity price per kWh: the price entity, else the fixed price, else None."""
-        entity_id = self.config.get(CONF_PRICE_ENTITY)
+    def _configured_price(self, entity_key: str, fixed_key: str) -> float | None:
+        entity_id = self.config.get(entity_key)
         if entity_id:
             value = state_number(self.hass.states.get(entity_id))
             if value is not None:
                 return value
-        fixed = self.config.get(CONF_PRICE_FIXED)
+        fixed = self.config.get(fixed_key)
         return float(fixed) if fixed is not None else None
+
+    def price(self) -> float | None:
+        """Electricity price per kWh at home: the price entity, else the fixed price, else None."""
+        return self._configured_price(CONF_PRICE_ENTITY, CONF_PRICE_FIXED)
+
+    def public_price(self) -> float | None:
+        """Price per kWh away from home: the public price entity, else the fixed one, else None."""
+        return self._configured_price(CONF_PUBLIC_PRICE_ENTITY, CONF_PUBLIC_PRICE_FIXED)
+
+    def solar_price(self) -> float:
+        """Value of a solar kWh used for charging; 0 when not set."""
+        return self._configured_price(CONF_SOLAR_PRICE_ENTITY, CONF_SOLAR_PRICE_FIXED) or 0.0
+
+    def loss_pct(self, dc: bool) -> float:
+        """Energy billed above what the car reports, in percent."""
+        return float(self.config[CONF_DC_LOSS_PCT] if dc else self.config[CONF_AC_LOSS_PCT])
+
+    def solar_surplus_kw(self) -> float | None:
+        """Solar power left after the house base load, or None without a solar power entity."""
+        entity_id = self.config.get(CONF_SOLAR_POWER_ENTITY)
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        value = state_number(state)
+        if value is None:
+            return None
+        unit = state.attributes.get(ATTR_UNIT_OF_MEASUREMENT) or UnitOfPower.WATT  # type: ignore[union-attr]
+        try:
+            kw = PowerConverter.convert(value, unit, UnitOfPower.KILO_WATT)
+        except Exception:  # noqa: BLE001 - an unknown unit means no solar estimate, never a crash
+            return None
+        return max(kw - float(self.config[CONF_BASE_LOAD_W]) / 1000, 0.0)
 
     def totals(self) -> dict[str, float]:
         """Cumulative counters used for report periods."""
@@ -205,7 +247,10 @@ class FordEvEngine:
             "energy_added": st.soc.energy_added,
             "charger_energy": st.charger_energy,
             "charger_energy_home": st.charger_energy_home,
+            "charger_energy_solar": st.charger_energy_solar,
             "cost": st.cost,
+            "cost_home": st.cost_home,
+            "cost_public": st.cost_public,
         }
         if st.last_odometer_km is not None:
             totals["odometer"] = st.last_odometer_km
@@ -246,6 +291,10 @@ class FordEvEngine:
             reading = self._charger_reading(self.fcq_state("elvehcharging"))
             if reading is not None:
                 self.state.charger_last_reading = reading
+
+    @staticmethod
+    def _is_dc(state: State | None) -> bool:
+        return state is not None and "DC" in str(state.attributes.get("chargingType") or "").upper()
 
     @staticmethod
     def _charger_reading(state: State | None) -> float | None:
@@ -291,7 +340,7 @@ class FordEvEngine:
         elif key == "elvehcharging":
             reading = self._charger_reading(new_state)
             if reading is not None:
-                self._on_charger(reading)
+                self._on_charger(reading, self._is_dc(new_state))
         elif key == "evccstatus" and _valid(new_state):
             self._on_evcc(prev, new_state.state)
         elif key == "ignitionstatus" and _valid(new_state):
@@ -322,21 +371,93 @@ class FordEvEngine:
             self._calibration_timer = None
         self.save()
 
-    def _on_charger(self, reading: float) -> None:
-        increment = charger_increment(self.state.charger_last_reading, reading)
-        self.state.charger_last_reading = reading
+    def _on_charger(self, reading: float, dc: bool) -> None:
+        st = self.state
+        now_ts = dt_util.utcnow().timestamp()
+        since = st.charger_last_ts
+        if st.session is not None:
+            since = max(since or 0.0, st.session.start_ts)
+        window_h = min(max(now_ts - since, 0.0), SOLAR_WINDOW_MAX_S) / 3600 if since is not None else 0.0
+        increment = charger_increment(st.charger_last_reading, reading)
+        if reading != st.charger_last_reading:
+            # The energy of the next step builds up from this change on.
+            st.charger_last_ts = now_ts
+        st.charger_last_reading = reading
         if increment > 0:
-            self._add_charger_energy(increment)
+            self._add_charger_energy(increment, dc, window_h)
         self.save()
 
-    def _add_charger_energy(self, kwh: float) -> None:
+    def _add_charger_energy(self, kwh: float, dc: bool = False, window_h: float = 0.0) -> None:
         self._roll()
         st = self.state
         st.charger_energy += kwh
-        if self.is_home():
-            st.charger_energy_home += kwh
-            st.cost += kwh * (self.price() or 0.0)
         st.model = add_charge(st.model, kwh, self.capacity_kwh)
+        if self.is_home():
+            surplus = self.solar_surplus_kw()
+            priced = price_charge(
+                kwh, self.loss_pct(dc), self.price() or 0.0, (surplus or 0.0) * window_h, self.solar_price()
+            )
+            st.charger_energy_home += kwh
+            st.charger_energy_solar += priced.solar_kwh
+            st.cost_home += priced.cost
+        else:
+            priced = price_charge(kwh, self.loss_pct(dc), self.public_price() or 0.0)
+            st.cost_public += priced.cost
+        st.cost += priced.cost
+
+    def add_past_charge(
+        self,
+        when: datetime,
+        kwh: float,
+        home: bool,
+        dc: bool,
+        solar_share: float = 0.0,
+        cost: float | None = None,
+    ) -> None:
+        """Count a charge that happened before it could be tracked.
+
+        It goes into the lifetime totals and into the report period it belongs to; periods that
+        started after it are left unchanged. The range model and SoC accounting are not touched.
+        """
+        self._roll()
+        st = self.state
+        loss = self.loss_pct(dc)
+        if home:
+            billed = kwh * (1 + loss / 100)
+            priced = price_charge(kwh, loss, self.price() or 0.0, billed * solar_share, self.solar_price())
+        else:
+            priced = price_charge(kwh, loss, self.public_price() or 0.0)
+        amount = priced.cost if cost is None else cost
+        added = {
+            "charger_energy": kwh,
+            "charger_energy_home": kwh if home else 0.0,
+            "charger_energy_solar": priced.solar_kwh if home else 0.0,
+            "cost": amount,
+            "cost_home" if home else "cost_public": amount,
+        }
+        for counter, value in added.items():
+            setattr(st, counter, getattr(st, counter) + value)
+        self._shift_periods(dt_util.as_local(when).date(), added)
+        self.notify_listeners()
+        self.save()
+
+    def _shift_periods(self, day: date, added: dict[str, float]) -> None:
+        periods = self.state.periods
+        for period in PERIODS:
+            snap = periods.snapshots.get(period)
+            if snap is None:
+                continue
+            start = date.fromisoformat(snap.start)
+            if day >= start:
+                continue
+            for counter, value in added.items():
+                if counter in snap.values:
+                    snap.values[counter] += value
+            previous = periods.previous.get(period)
+            prev_start = period_start(period, datetime.combine(start - timedelta(days=1), datetime.min.time()))
+            if previous is not None and prev_start <= day:
+                for counter, value in added.items():
+                    previous[counter] = previous.get(counter, 0.0) + value
 
     # ------------------------------------------------------------------ charging sessions
 
@@ -424,7 +545,7 @@ class FordEvEngine:
         self._apply_session_fallback()
         kwh = max(st.charger_energy - session.charger_at_start, 0.0)
         cost = st.cost - session.cost_at_start
-        price = self.price()
+        price = self.price() if session.home else self.public_price()
         target = st.settings.charge_target
 
         if to == "B":
@@ -443,7 +564,7 @@ class FordEvEngine:
             f"{start:%d.%m %H:%M}-{end:%H:%M} ({duration_min // 60}h{duration_min % 60:02d}), "
             f"{start_soc_txt}% -> {end_soc_txt}%, +{kwh:.1f} kWh, {location}"
         )
-        if price is not None and session.home:
+        if price is not None:
             summary += f", {cost:.2f} {self.hass.config.currency}"
 
         data = {

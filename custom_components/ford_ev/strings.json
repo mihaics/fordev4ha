@@ -41,6 +41,14 @@
           "dashboard_path": "Dashboard path",
           "price_entity": "Electricity price entity",
           "price_fixed": "Fixed electricity price",
+          "public_price_entity": "Public charging price entity",
+          "public_price_fixed": "Fixed public charging price",
+          "solar_power_entity": "Solar power sensor",
+          "solar_price_entity": "Solar kWh price entity",
+          "solar_price_fixed": "Fixed solar kWh price",
+          "base_load_w": "House base load",
+          "ac_loss_pct": "AC charging losses",
+          "dc_loss_pct": "DC charging losses",
           "alert_delay_min": "Unlocked / open alert delay",
           "reminder_time": "Plug-in reminder time",
           "night_start": "Night window start",
@@ -57,7 +65,15 @@
           "notify_services": "For example mobile_app_ followed by your phone name. Leave empty to send no notifications; the event entities still fire.",
           "dashboard_path": "Opened when a notification is tapped, for example /dashboard-ford-ev.",
           "price_entity": "Price per kWh in your currency. Takes precedence over the fixed price.",
-          "price_fixed": "Price per kWh, used when no price entity is set. Only charging at home is priced."
+          "price_fixed": "Price per kWh, used when no price entity is set. Applies to charging at home.",
+          "public_price_entity": "Price per kWh away from home. Takes precedence over the fixed public price.",
+          "public_price_fixed": "Price per kWh away from home, used when no public price entity is set. Without a public price, charging away from home costs nothing.",
+          "solar_power_entity": "Current solar production. When set, solar power above the house base load covers home charging first. A forecast sensor works as an estimate.",
+          "solar_price_entity": "What a solar kWh used for charging is worth to you, for example what exporting it would earn. Takes precedence over the fixed solar price.",
+          "solar_price_fixed": "Used when no solar price entity is set. Without either, solar kWh are free.",
+          "base_load_w": "Solar power the house uses before the car gets any.",
+          "ac_loss_pct": "Energy the meter bills above what the car reports when charging on AC (onboard charger, wallbox, cable).",
+          "dc_loss_pct": "Energy the meter bills above what the car reports when charging on DC."
         }
       }
     },
@@ -76,6 +92,18 @@
         "sat": "Saturday",
         "sun": "Sunday"
       }
+    },
+    "location": {
+      "options": {
+        "home": "Home",
+        "public": "Public"
+      }
+    },
+    "charging_type": {
+      "options": {
+        "ac": "AC",
+        "dc": "DC"
+      }
     }
   },
   "entity": {
@@ -92,8 +120,17 @@
       "charger_energy_home": {
         "name": "Energy charged at home"
       },
+      "charger_energy_solar": {
+        "name": "Energy charged from solar"
+      },
       "charging_cost": {
         "name": "Charging cost"
+      },
+      "charging_cost_home": {
+        "name": "Charging cost at home"
+      },
+      "charging_cost_public": {
+        "name": "Public charging cost"
       },
       "distance_day": {
         "name": "Distance today"
@@ -286,6 +323,40 @@
         "config_entry_id": {
           "name": "Vehicle",
           "description": "Required when more than one vehicle is set up."
+        }
+      }
+    },
+    "add_charge": {
+      "name": "Add a past charge",
+      "description": "Counts a charge that happened before the integration could track it, for example before it was installed. It goes into the lifetime totals and into the week and month it belongs to.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Vehicle",
+          "description": "Required when more than one vehicle is set up."
+        },
+        "date": {
+          "name": "Date",
+          "description": "When the charge happened."
+        },
+        "energy_kwh": {
+          "name": "Energy",
+          "description": "Energy charged, as the car or its app reports it. Use 0 to record only a cost for a charge already counted."
+        },
+        "location": {
+          "name": "Location",
+          "description": "Home is priced at the electricity price, public at the public charging price."
+        },
+        "charging_type": {
+          "name": "Charging type",
+          "description": "Chooses the AC or DC losses. Default: AC at home, DC in public."
+        },
+        "solar_share": {
+          "name": "Solar share",
+          "description": "Share of the billed energy that came from solar, 0 to 1. Home only."
+        },
+        "cost": {
+          "name": "Cost",
+          "description": "The amount actually paid, for example from an invoice. Replaces the calculated cost."
         }
       }
     }
