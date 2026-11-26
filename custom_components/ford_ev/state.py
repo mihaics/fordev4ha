@@ -40,6 +40,9 @@ class ChargingSession:
     model_soc_at_start: float | None
     home: bool
     fallback_kwh: float = 0.0
+    # The charger counter was read in this session, and how often it started again from zero.
+    counter_seen: bool = False
+    counter_restarts: int = 0
 
 
 @dataclass

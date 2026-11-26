@@ -253,3 +253,65 @@ async def test_settings_persist(hass, fcq):
     assert settings.climate_setpoint == 22.0
     assert settings.notify["night_activity"] is False
     assert settings.notify["calibration"] is False
+
+
+# ---------------------------------------------------------------------- charger counter that restarts
+
+
+async def _session(hass, freezer, fcq, readings, end_soc, end="B", wait=121):
+    await fcq.set("evccstatus", "C")
+    for reading in readings:
+        await fcq.set("elvehcharging", "CHARGING", {"chargerEnergyOutput": reading, "chargingType": "AC_BASIC"})
+    await fcq.set("soc", end_soc)
+    if end:
+        await fcq.set("evccstatus", end)
+        await advance(hass, freezer, wait)
+
+
+async def test_restarted_charging_run_is_reconciled_with_the_state_of_charge(hass, fcq, freezer):
+    entry = await async_setup_ford_ev(hass, fcq, options={"price_fixed": 1.0, "ac_loss_pct": 0})
+    got = capture(hass, entry.entry_id)
+    # The counter restarts mid-session and the end of the first run was never seen: 5.0 kWh counted.
+    await _session(hass, freezer, fcq, (0.5, 4.5, 1.0), "62")
+    st = engine_of(entry).state
+    assert st.charger_energy == pytest.approx(7.2)
+    assert st.charger_energy_home == pytest.approx(7.2)
+    assert st.cost == pytest.approx(7.2)
+    assert st.model.cycle_charged == pytest.approx(7.2)
+    data = got[-1][2]
+    assert data["kwh"] == pytest.approx(7.2)
+    assert data["estimated_kwh"] == pytest.approx(2.2)
+    assert "+7.2 kWh" in data["summary"]
+
+
+async def test_session_with_a_complete_counter_is_not_changed(hass, fcq, freezer):
+    entry = await async_setup_ford_ev(hass, fcq)
+    got = capture(hass, entry.entry_id)
+    await _session(hass, freezer, fcq, (0.5, 7.0), "60")
+    assert engine_of(entry).state.charger_energy == pytest.approx(6.5)
+    assert got[-1][2]["estimated_kwh"] == 0
+
+
+async def test_small_gap_to_the_state_of_charge_is_rounding_not_an_undercount(hass, fcq, freezer):
+    entry = await async_setup_ford_ev(hass, fcq)
+    # 5.5 kWh counted, 6.0 kWh by state of charge: within one and a half percent of the battery.
+    await _session(hass, freezer, fcq, (0.5, 6.0), "60")
+    assert engine_of(entry).state.charger_energy == pytest.approx(5.5)
+
+
+async def test_reconciliation_at_calibration_is_not_repeated_at_session_end(hass, fcq, freezer):
+    entry = await async_setup_ford_ev(hass, fcq)
+    await _session(hass, freezer, fcq, (0.5, 15.5, 5.0), "100", end=None)
+    await advance(hass, freezer, 301)  # calibration at 100 %
+    st = engine_of(entry).state
+    assert st.charger_energy == pytest.approx(30.0)
+    await fcq.set("evccstatus", "B")
+    await advance(hass, freezer, 121)
+    assert st.charger_energy == pytest.approx(30.0)
+
+
+async def test_state_of_charge_jump_without_a_counter_restart_adds_nothing(hass, fcq, freezer):
+    entry = await async_setup_ford_ev(hass, fcq)
+    # The counter ran through; the state of charge was corrected upwards at the end of the charge.
+    await _session(hass, freezer, fcq, (0.5, 6.5), "65")
+    assert engine_of(entry).state.charger_energy == pytest.approx(6.0)

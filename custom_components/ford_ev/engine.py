@@ -78,6 +78,8 @@ TRIP_LATE_ENERGY_S = 1800
 # Below this distance a trip's consumption is noise: 1 % of charge is several km.
 MIN_TRIP_CONSUMPTION_KM = 5.0
 MIN_SESSION_POWER_S = 300
+# The state of charge is reported in whole percent at both ends of a session.
+RECONCILE_TOLERANCE_POINTS = 1.5
 CALIBRATION_DELAY_S = 300
 LAST_SESSION_MAX_AGE = timedelta(hours=1)
 SAVE_DELAY_S = 10
@@ -522,6 +524,10 @@ class FordEvEngine:
             since = max(since or 0.0, st.session.start_ts)
         window_h = min(max(now_ts - since, 0.0), SOLAR_WINDOW_MAX_S) / 3600 if since is not None else 0.0
         increment = charger_increment(st.charger_last_reading, reading)
+        if st.session is not None:
+            if st.session.counter_seen and st.charger_last_reading is not None and reading < st.charger_last_reading:
+                st.session.counter_restarts += 1
+            st.session.counter_seen = True
         if reading != st.charger_last_reading:
             # The energy of the next step builds up from this change on.
             st.charger_last_ts = now_ts
@@ -670,17 +676,30 @@ class FordEvEngine:
             self._finalise_session(evcc, dt_util.utcnow().timestamp())
 
     def _apply_session_fallback(self) -> None:
-        """Count the open session's SoC rise as charger energy when the charger reported none."""
+        """Count energy of the open session that the charger counter did not report.
+
+        The counter restarts when a charging run restarts within a session, and the end of the
+        earlier run is lost between two updates; some vehicles report no counter at all. In
+        those two cases the session's rise in state of charge is used: when it exceeds what was
+        counted, the difference is added. After a restart, a gap up to RECONCILE_TOLERANCE_POINTS
+        is the rounding of the state of charge, not an undercount. A session whose counter ran
+        through is never changed, because the state of charge itself drifts and is corrected in
+        jumps.
+        """
         st = self.state
         session = st.session
         if session is None:
             return
-        reported = st.charger_energy - session.charger_at_start - session.fallback_kwh
+        counted = st.charger_energy - session.charger_at_start
         added = st.soc.energy_added - session.added_at_start
-        if reported <= 0 and added > session.fallback_kwh:
-            extra = added - session.fallback_kwh
-            self._add_charger_energy(extra)
-            session.fallback_kwh += extra
+        has_counter = counted - session.fallback_kwh > 0
+        if has_counter and not session.counter_restarts:
+            return
+        tolerance = RECONCILE_TOLERANCE_POINTS / 100 * self.capacity_kwh if has_counter else 0.0
+        missing = added - counted
+        if missing > tolerance:
+            self._add_charger_energy(missing, self._is_dc(self.fcq_state("elvehcharging")))
+            session.fallback_kwh += missing
 
     def _finalise_session(self, to: str, end_ts: float) -> None:
         st = self.state
@@ -690,6 +709,7 @@ class FordEvEngine:
             return
         end_soc = self.current_soc()
         self._apply_session_fallback()
+        estimated_kwh = session.fallback_kwh
         kwh = max(st.charger_energy - session.charger_at_start, 0.0)
         cost = st.cost - session.cost_at_start
         price = self.price() if session.home else self.public_price()
@@ -724,6 +744,8 @@ class FordEvEngine:
             "start_soc": session.start_soc,
             "end_soc": end_soc,
             "kwh": round(kwh, 3),
+            # Part of kwh taken from the state of charge because the charger counter missed it.
+            "estimated_kwh": round(estimated_kwh, 3),
             "cost": round(cost, 2),
             "avg_kw": round(avg_kw, 1) if avg_kw is not None else None,
             "price_per_kwh": round(cost / kwh, 3) if kwh > 0 and price is not None else None,

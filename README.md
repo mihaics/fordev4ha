@@ -299,6 +299,9 @@ Entity IDs follow the pattern `<platform>.ev_<entity name>`, for example `sensor
 
 **Energy charged stays at 0:**
 - Some vehicles or regions do not report charger energy. The integration then uses each session's state-of-charge rise instead, so the cost and the range model still work.
+
+**Energy charged is higher than the car's app shows:**
+- The car's charger counter restarts when charging pauses and resumes within one session, and the app shows only the last run. When the counter restarted in a session and the session's state-of-charge rise is more than 1.5 % of the battery above what the counter reported, the integration adds the difference. The session's `estimated_kwh` attribute says how much of it was added this way.
 - The first reading after installation is only a baseline and is not counted.
 
 **The model says "Not calibrated yet":** charge to 100 % once and leave the car plugged in until it has reported 100 % for five minutes.
