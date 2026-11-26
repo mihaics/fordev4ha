@@ -65,6 +65,18 @@ class EngineState:
     pending_trip_end_ts: float | None = None
     last_odometer_km: float | None = None
     alerts_armed: dict[str, bool] = field(default_factory=dict)
+    # Money value of the energy now in the battery; None until cost tracking is seeded.
+    battery_value: float | None = None
+    # Cost of the energy taken out of the battery, driving and parked.
+    driving_cost: float = 0.0
+    parked_energy: float = 0.0
+    parked_cost: float = 0.0
+    parked_since: str | None = None  # ISO date
+    trip_energy_start: float | None = None
+    trip_cost_start: float | None = None
+    last_trip: dict[str, Any] | None = None
+    temp_bins: dict[str, dict[str, float]] = field(default_factory=dict)
+    capacity_estimate: float | None = None
 
     @classmethod
     def new(cls) -> EngineState:
@@ -95,6 +107,9 @@ class EngineState:
         session = data.get("session")
         st.session = _build(ChargingSession, session) if session else None
         st.alerts_armed = dict(data.get("alerts_armed") or {})
+        st.temp_bins = {str(k): dict(v) for k, v in (data.get("temp_bins") or {}).items()}
+        if "capacity_estimate" not in data:
+            st.capacity_estimate = (st.model.last_result or {}).get("capacity_estimate_kwh")
         return st
 
 

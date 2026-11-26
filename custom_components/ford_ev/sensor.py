@@ -28,7 +28,9 @@ from homeassistant.util import dt as dt_util
 
 from .engine import FordEvConfigEntry, FordEvEngine
 from .entity import FordEvEntity
-from .periods import period_value
+from .const import CONF_SOLAR_POWER_ENTITY
+from .periods import LIFETIME, period_value
+from .trips import bin_rows, measured_consumption
 from .range_model import BY_TEMPERATURE, climate_kw, drive_kwh, model_soc, predicted_kwh_per_km
 from .units import state_km, state_number
 
@@ -46,7 +48,11 @@ class FordEvSensorDescription(SensorEntityDescription):
     attrs_fn: Callable[[FordEvEngine], dict[str, Any]] | None = None
     period: str | None = None
     currency: bool = False
+    # Appended to the currency, for example "/100 km".
+    unit_suffix: str = ""
     poll: bool = False
+    # The sensor is only created when this returns True.
+    exists_fn: Callable[[FordEvEngine], bool] | None = None
 
 
 # ---------------------------------------------------------------------- value helpers
@@ -204,6 +210,213 @@ def _charge_end(engine: FordEvEngine) -> datetime | None:
     return value
 
 
+# ---------------------------------------------------------------------- costs
+
+
+def _round(value: float | None, digits: int) -> float | None:
+    return round(value, digits) if value is not None else None
+
+
+def _per_100(amount: float | None, km: float | None) -> float | None:
+    if amount is None or km is None or km < MIN_CONSUMPTION_KM:
+        return None
+    return amount / km * 100
+
+
+def _in_period(engine: FordEvEngine, period: str, counter: str) -> float | None:
+    return period_value(engine.state.periods, period, counter, engine.totals())
+
+
+def _cost_per_100km(period: str) -> Callable[[FordEvEngine], float | None]:
+    def value(engine: FordEvEngine) -> float | None:
+        return _per_100(_in_period(engine, period, "driving_cost"), _in_period(engine, period, "odometer"))
+
+    return value
+
+
+def _cost_per_100km_attrs(period: str) -> Callable[[FordEvEngine], dict[str, Any]]:
+    def attrs(engine: FordEvEngine) -> dict[str, Any]:
+        def get(counter: str) -> float | None:
+            return _in_period(engine, period, counter)
+
+        charged, cost = get("charger_energy"), get("cost")
+        out: dict[str, Any] = {
+            "km": _round(get("odometer"), 1),
+            "driving_cost": _round(get("driving_cost"), 2),
+            "charging_cost": _round(cost, 2),
+            "charging_cost_home": _round(get("cost_home"), 2),
+            "charging_cost_public": _round(get("cost_public"), 2),
+            "charged_kwh": _round(charged, 1),
+            "solar_kwh": _round(get("charger_energy_solar"), 1),
+            "price_per_kwh": round(cost / charged, 3) if cost is not None and charged else None,
+        }
+        if period == LIFETIME:
+            snapshot = engine.state.periods.snapshots.get(LIFETIME)
+            out["since"] = snapshot.start if snapshot else None
+        else:
+            previous = engine.state.periods.previous.get(period, {})
+            out["previous_period"] = _round(_per_100(previous.get("driving_cost"), previous.get("odometer")), 2)
+        return out
+
+    return attrs
+
+
+def _battery_price_attrs(engine: FordEvEngine) -> dict[str, Any]:
+    return {"battery_value": _round(engine.state.battery_value, 2)}
+
+
+def _energy_price(engine: FordEvEngine) -> float | None:
+    """Price of the energy the car drives on: what is in the battery, else the home price."""
+    price = engine.battery_price()
+    if price is None:
+        price = (engine.scenario_prices() or {}).get("home")
+    return price
+
+
+def _model_cost(engine: FordEvEngine, temp: float | None) -> float | None:
+    per_km, price = _kwh_per_km(engine, temp), _energy_price(engine)
+    if per_km is None or price is None:
+        return None
+    return per_km * 100 * price
+
+
+def _model_cost_attrs(engine: FordEvEngine) -> dict[str, Any]:
+    prices = {k: v for k, v in (engine.scenario_prices() or {}).items() if v is not None}
+    battery = engine.battery_price()
+    if battery is not None:
+        prices["battery"] = battery
+    rows = []
+    for temp in BY_TEMPERATURE:
+        per_km = _kwh_per_km(engine, temp)
+        if per_km is None or per_km <= 0:
+            continue
+        row: dict[str, Any] = {"t": temp, "kwh100": round(per_km * 100, 1)}
+        row.update({name: round(per_km * 100 * price, 2) for name, price in prices.items()})
+        rows.append(row)
+    return {"prices_per_kwh": {k: round(v, 3) for k, v in prices.items()}, "by_temperature": rows}
+
+
+def _last_trip(engine: FordEvEngine) -> str | None:
+    last = engine.state.last_trip
+    return str(last.get("summary", ""))[:255] if last else None
+
+
+def _last_trip_attrs(engine: FordEvEngine) -> dict[str, Any]:
+    last = engine.state.last_trip or {}
+    out = {k: v for k, v in last.items() if k not in ("end_ts", "bin", "summary")}
+    for key, digits in (("kwh", 2), ("cost", 2)):
+        if out.get(key) is not None:
+            out[key] = round(out[key], digits)
+    return out
+
+
+def _month_tracking_start(engine: FordEvEngine, since: str | None) -> datetime | None:
+    """Start of the part of this month that was tracked from the given date on."""
+    month = engine.state.periods.snapshots.get("month")
+    if month is None:
+        return None
+    start = date.fromisoformat(month.start)
+    if since is not None:
+        start = max(start, date.fromisoformat(since))
+    return dt_util.start_of_local_day(start)
+
+
+def _parked_attrs(engine: FordEvEngine) -> dict[str, Any]:
+    month_kwh = _in_period(engine, "month", "parked_energy")
+    start = _month_tracking_start(engine, engine.state.parked_since)
+    days = (dt_util.now() - start).total_seconds() / 86400 if start else 0.0
+    return {
+        "cost": round(engine.state.parked_cost, 2),
+        "month_kwh": _round(month_kwh, 2),
+        "month_cost": _round(_in_period(engine, "month", "parked_cost"), 2),
+        "per_day": round(month_kwh / days, 2) if month_kwh is not None and days >= 1 else None,
+    }
+
+
+def _charge_to_target(engine: FordEvEngine) -> tuple[float, float] | None:
+    """(kWh, cost) to reach the charge target where the car is now."""
+    soc = engine.current_soc()
+    home = engine.is_home()
+    price = engine.price() if home else engine.public_price()
+    if soc is None or price is None:
+        return None
+    kwh = max(engine.state.settings.charge_target - soc, 0.0) / 100 * engine.capacity_kwh
+    return kwh, kwh * (1 + engine.loss_pct(dc=not home) / 100) * price
+
+
+def _charge_to_target_cost(engine: FordEvEngine) -> float | None:
+    result = _charge_to_target(engine)
+    return result[1] if result else None
+
+
+def _charge_to_target_attrs(engine: FordEvEngine) -> dict[str, Any]:
+    result = _charge_to_target(engine)
+    return {"kwh": round(result[0], 1) if result else None, "location": "home" if engine.is_home() else "away"}
+
+
+def _capacity_attrs(engine: FordEvEngine) -> dict[str, Any]:
+    estimate = engine.state.capacity_estimate
+    return {"percent_of_configured": round(estimate / engine.capacity_kwh * 100, 1) if estimate else None}
+
+
+def _month_projection_factor(engine: FordEvEngine) -> float | None:
+    """Month so far times this is the whole month. None until 3 days of the month are tracked.
+
+    When the month began before tracking did and the day tracking started is not known, there
+    is no projection.
+    """
+    periods = engine.state.periods
+    month, lifetime = periods.snapshots.get("month"), periods.snapshots.get(LIFETIME)
+    if month is None or lifetime is None:
+        return None
+    month_start, tracked_from = date.fromisoformat(month.start), date.fromisoformat(lifetime.start)
+    if "month" not in periods.previous and tracked_from == month_start:
+        return None
+    start = dt_util.start_of_local_day(max(month_start, tracked_from))
+    now = dt_util.now()
+    next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    elapsed = (now - start).total_seconds() / 86400
+    remaining = max((dt_util.start_of_local_day(next_month) - now).total_seconds() / 86400, 0.0)
+    if elapsed < 3:
+        return None
+    return 1 + remaining / elapsed
+
+
+def _month_projection(engine: FordEvEngine) -> float | None:
+    factor, cost = _month_projection_factor(engine), _in_period(engine, "month", "driving_cost")
+    return cost * factor if factor is not None and cost is not None else None
+
+
+def _month_projection_attrs(engine: FordEvEngine) -> dict[str, Any]:
+    factor, km = _month_projection_factor(engine), _in_period(engine, "month", "odometer")
+    return {"km": round(km * factor) if factor is not None and km is not None else None}
+
+
+def _fuel_savings_in(engine: FordEvEngine, period: str) -> float | None:
+    """What the same distance would have cost in fuel, minus what it cost in electricity."""
+    consumption, price = engine.ice_consumption(), engine.fuel_price()
+    km, cost = _in_period(engine, period, "odometer"), _in_period(engine, period, "driving_cost")
+    if consumption is None or price is None or km is None or cost is None:
+        return None
+    return km * consumption / 100 * price - cost
+
+
+def _fuel_savings_attrs(engine: FordEvEngine) -> dict[str, Any]:
+    consumption, price = engine.ice_consumption(), engine.fuel_price()
+    out: dict[str, Any] = {p: _round(_fuel_savings_in(engine, p), 2) for p in ("week", "month", "year")}
+    out["fuel_cost_per_100km"] = round(consumption * price, 2) if consumption is not None and price is not None else None
+    return out
+
+
+def _solar_savings_in(engine: FordEvEngine, period: str | None) -> float | None:
+    """Solar energy charged, times what it saved per kWh against the home price."""
+    price = engine.price()
+    kwh = engine.state.charger_energy_solar if period is None else _in_period(engine, period, "charger_energy_solar")
+    if price is None or kwh is None:
+        return None
+    return kwh * max(price - engine.solar_price(), 0.0)
+
+
 # ---------------------------------------------------------------------- descriptions
 
 _ENERGY = {
@@ -223,6 +436,9 @@ _CONSUMPTION = {
     "suggested_display_precision": 1,
 }
 _MONEY = {"device_class": SensorDeviceClass.MONETARY, "currency": True, "suggested_display_precision": 2}
+# An amount of money that is an estimate or a rate, not a running total.
+_AMOUNT = {"currency": True, "state_class": SensorStateClass.MEASUREMENT, "suggested_display_precision": 2}
+_PER_100KM = {**_AMOUNT, "unit_suffix": "/100 km"}
 
 
 def _total(key: str, fn: Callable[[FordEvEngine], float]) -> FordEvSensorDescription:
@@ -271,6 +487,87 @@ SENSORS: tuple[FordEvSensorDescription, ...] = (
     _period_sensor("cost_month", "month", "cost", _MONEY),
     FordEvSensorDescription(key="consumption_week", value_fn=_consumption("week"), **_CONSUMPTION),
     FordEvSensorDescription(key="consumption_month", value_fn=_consumption("month"), **_CONSUMPTION),
+    _period_sensor("distance_year", "year", "odometer", _KM),
+    _period_sensor("energy_used_year", "year", "energy_used", _ENERGY),
+    _period_sensor("charger_energy_year", "year", "charger_energy", _ENERGY),
+    _period_sensor("cost_year", "year", "cost", _MONEY),
+    FordEvSensorDescription(key="consumption_year", value_fn=_consumption("year"), **_CONSUMPTION),
+    FordEvSensorDescription(
+        key="driving_cost",
+        value_fn=lambda e: e.state.driving_cost if e.state.battery_value is not None else None,
+        state_class=SensorStateClass.TOTAL,
+        **_MONEY,
+    ),
+    FordEvSensorDescription(
+        key="battery_energy_price",
+        value_fn=lambda e: e.battery_price(),
+        attrs_fn=_battery_price_attrs,
+        **{**_AMOUNT, "unit_suffix": "/kWh", "suggested_display_precision": 3},
+    ),
+    *(
+        FordEvSensorDescription(
+            key=f"cost_per_100km_{period}",
+            value_fn=_cost_per_100km(period),
+            attrs_fn=_cost_per_100km_attrs(period),
+            **_PER_100KM,
+        )
+        for period in ("week", "month", "year", LIFETIME)
+    ),
+    FordEvSensorDescription(
+        key="model_cost_per_100km",
+        value_fn=lambda e: _model_cost(e, e.current_temp_c()),
+        attrs_fn=_model_cost_attrs,
+        **_PER_100KM,
+    ),
+    FordEvSensorDescription(
+        key="model_cost_per_100km_tomorrow",
+        value_fn=lambda e: _model_cost(e, e.forecast_tomorrow_c),
+        attrs_fn=lambda e: {"temperature": e.forecast_tomorrow_c},
+        **{**_PER_100KM, "state_class": None},
+    ),
+    FordEvSensorDescription(
+        key="cost_month_projection", value_fn=_month_projection, attrs_fn=_month_projection_attrs, **_AMOUNT
+    ),
+    FordEvSensorDescription(
+        key="charge_to_target_cost", value_fn=_charge_to_target_cost, attrs_fn=_charge_to_target_attrs, **_AMOUNT
+    ),
+    FordEvSensorDescription(
+        key="fuel_savings",
+        value_fn=lambda e: _fuel_savings_in(e, LIFETIME),
+        attrs_fn=_fuel_savings_attrs,
+        exists_fn=lambda e: e.ice_consumption() is not None,
+        **_AMOUNT,
+    ),
+    FordEvSensorDescription(
+        key="solar_savings",
+        value_fn=lambda e: _solar_savings_in(e, None),
+        attrs_fn=lambda e: {p: _round(_solar_savings_in(e, p), 2) for p in ("week", "month", "year")},
+        exists_fn=lambda e: bool(e.config.get(CONF_SOLAR_POWER_ENTITY)),
+        **_AMOUNT,
+    ),
+    FordEvSensorDescription(
+        key="consumption_by_temperature",
+        value_fn=lambda e: measured_consumption(e.state.temp_bins),
+        attrs_fn=lambda e: {"by_temperature": bin_rows(e.state.temp_bins)},
+        **_CONSUMPTION,
+    ),
+    FordEvSensorDescription(key="last_trip", value_fn=_last_trip, attrs_fn=_last_trip_attrs),
+    FordEvSensorDescription(
+        key="parked_energy",
+        value_fn=lambda e: e.state.parked_energy,
+        attrs_fn=_parked_attrs,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        **_ENERGY,
+    ),
+    FordEvSensorDescription(
+        key="capacity_estimate",
+        value_fn=lambda e: e.state.capacity_estimate,
+        attrs_fn=_capacity_attrs,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY_STORAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
     FordEvSensorDescription(
         key="car_full_range", value_fn=_car_full_range, state_class=SensorStateClass.MEASUREMENT, **_KM
     ),
@@ -379,7 +676,11 @@ async def async_setup_entry(
 ) -> None:
     """Add the sensors."""
     engine = entry.runtime_data.engine
-    async_add_entities(FordEvSensor(engine, description) for description in SENSORS)
+    async_add_entities(
+        FordEvSensor(engine, description)
+        for description in SENSORS
+        if description.exists_fn is None or description.exists_fn(engine)
+    )
 
 
 class FordEvSensor(FordEvEntity, SensorEntity):
@@ -391,7 +692,7 @@ class FordEvSensor(FordEvEntity, SensorEntity):
         super().__init__(engine, description.key)
         self.entity_description = description
         if description.currency:
-            self._attr_native_unit_of_measurement = engine.hass.config.currency
+            self._attr_native_unit_of_measurement = f"{engine.hass.config.currency}{description.unit_suffix}"
         self._attr_should_poll = description.poll
 
     @property

@@ -1,6 +1,7 @@
-"""Day/week/month report periods from snapshots of cumulative counters.
+"""Day/week/month/year report periods from snapshots of cumulative counters.
 
-Pure functions, no Home Assistant dependency. Weeks start on Monday.
+Pure functions, no Home Assistant dependency. Weeks start on Monday. The lifetime snapshot holds
+the counters when tracking started and never rolls.
 """
 
 from __future__ import annotations
@@ -9,7 +10,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
 COUNTERS = ("odometer", "energy_used", "energy_added", "charger_energy", "charger_energy_home", "cost")
-PERIODS = ("day", "week", "month")
+PERIODS = ("day", "week", "month", "year")
+LIFETIME = "total"
 
 
 @dataclass
@@ -37,6 +39,8 @@ def period_start(period: str, now_local: datetime) -> date:
         return today - timedelta(days=today.weekday())
     if period == "month":
         return today.replace(day=1)
+    if period == "year":
+        return today.replace(month=1, day=1)
     raise ValueError(f"unknown period {period}")
 
 
@@ -57,7 +61,33 @@ def roll_periods(st: PeriodState, now_local: datetime, totals: dict[str, float])
         missing = {c: v for c, v in totals.items() if c not in snap.values}
         if missing:
             snapshots[period] = PeriodSnapshot(snap.start, {**snap.values, **missing})
+    lifetime = snapshots.get(LIFETIME)
+    if lifetime is None:
+        snapshots[LIFETIME] = PeriodSnapshot(now_local.date().isoformat(), dict(totals))
+    else:
+        missing = {c: v for c, v in totals.items() if c not in lifetime.values}
+        if missing:
+            snapshots[LIFETIME] = PeriodSnapshot(lifetime.start, {**lifetime.values, **missing})
     return PeriodState(snapshots, previous)
+
+
+def seed_long_periods(st: PeriodState, now_local: datetime) -> PeriodState:
+    """Give an installation from before the year and lifetime periods existed its history.
+
+    While the month has never rolled over, its snapshot still holds the counters from when
+    tracking started, so the year and the lifetime start from the same values. Otherwise they
+    start when roll_periods first sees them.
+    """
+    month = st.snapshots.get("month")
+    if month is None or "month" in st.previous:
+        return st
+    snapshots = dict(st.snapshots)
+    year_start = period_start("year", now_local)
+    if "year" not in snapshots and date.fromisoformat(month.start) >= year_start:
+        snapshots["year"] = PeriodSnapshot(year_start.isoformat(), dict(month.values))
+    if LIFETIME not in snapshots:
+        snapshots[LIFETIME] = PeriodSnapshot(month.start, dict(month.values))
+    return PeriodState(snapshots, dict(st.previous))
 
 
 def period_value(st: PeriodState, period: str, counter: str, totals: dict[str, float]) -> float | None:

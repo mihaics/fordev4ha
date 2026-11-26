@@ -17,6 +17,9 @@ from .const import (
     CONF_DASHBOARD_PATH,
     CONF_DC_LOSS_PCT,
     CONF_DEVICE_ID,
+    CONF_FUEL_PRICE_ENTITY,
+    CONF_FUEL_PRICE_FIXED,
+    CONF_ICE_CONSUMPTION,
     CONF_NIGHT_END,
     CONF_NIGHT_START,
     CONF_NOTIFY_ENTITIES,
@@ -67,6 +70,9 @@ _CLEARABLE = (
     CONF_SOLAR_POWER_ENTITY,
     CONF_SOLAR_PRICE_ENTITY,
     CONF_SOLAR_PRICE_FIXED,
+    CONF_ICE_CONSUMPTION,
+    CONF_FUEL_PRICE_ENTITY,
+    CONF_FUEL_PRICE_FIXED,
 )
 
 
@@ -200,6 +206,13 @@ class FordEvOptionsFlow(OptionsFlowWithReload):
                 ),
                 vol.Required(CONF_AC_LOSS_PCT, default=current[CONF_AC_LOSS_PCT]): _LOSS,
                 vol.Required(CONF_DC_LOSS_PCT, default=current[CONF_DC_LOSS_PCT]): _LOSS,
+                _suggested(CONF_ICE_CONSUMPTION, current): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1, max=30, step=0.1, unit_of_measurement="l/100 km", mode=selector.NumberSelectorMode.BOX
+                    )
+                ),
+                _suggested(CONF_FUEL_PRICE_ENTITY, current): _PRICE_ENTITY,
+                _suggested(CONF_FUEL_PRICE_FIXED, current): _PRICE,
                 vol.Required(CONF_ALERT_DELAY_MIN, default=current[CONF_ALERT_DELAY_MIN]): selector.NumberSelector(
                     selector.NumberSelectorConfig(min=1, max=120, step=1, unit_of_measurement="min", mode=selector.NumberSelectorMode.BOX)
                 ),

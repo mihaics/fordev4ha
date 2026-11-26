@@ -59,7 +59,10 @@
           "stale_no_update_h": "Alert when the car has not reported for",
           "battery_kwh": "Usable battery capacity",
           "temperature_sensor": "Outside temperature sensor",
-          "weather_entity": "Weather entity"
+          "weather_entity": "Weather entity",
+          "ice_consumption": "Fuel car consumption",
+          "fuel_price_entity": "Fuel price entity",
+          "fuel_price_fixed": "Fixed fuel price"
         },
         "data_description": {
           "notify_services": "For example mobile_app_ followed by your phone name. Leave empty to send no notifications; the event entities still fire.",
@@ -73,7 +76,10 @@
           "solar_price_fixed": "Used when no solar price entity is set. Without either, solar kWh are free.",
           "base_load_w": "Solar power the house uses before the car gets any.",
           "ac_loss_pct": "Energy the meter bills above what the car reports when charging on AC (onboard charger, wallbox, cable).",
-          "dc_loss_pct": "Energy the meter bills above what the car reports when charging on DC."
+          "dc_loss_pct": "Energy the meter bills above what the car reports when charging on DC.",
+          "ice_consumption": "Optional. Litres per 100 km of the combustion car to compare with. When set, a sensor shows what driving electric has saved.",
+          "fuel_price_entity": "Price per litre in your currency. Takes precedence over the fixed fuel price.",
+          "fuel_price_fixed": "Price per litre, used when no fuel price entity is set."
         }
       }
     },
@@ -226,6 +232,69 @@
       },
       "last_calibration": {
         "name": "Last calibration"
+      },
+      "distance_year": {
+        "name": "Distance this year"
+      },
+      "energy_used_year": {
+        "name": "Energy used this year"
+      },
+      "charger_energy_year": {
+        "name": "Energy charged this year"
+      },
+      "cost_year": {
+        "name": "Charging cost this year"
+      },
+      "consumption_year": {
+        "name": "Consumption this year"
+      },
+      "driving_cost": {
+        "name": "Driving cost"
+      },
+      "battery_energy_price": {
+        "name": "Battery energy price"
+      },
+      "cost_per_100km_week": {
+        "name": "Cost per 100 km this week"
+      },
+      "cost_per_100km_month": {
+        "name": "Cost per 100 km this month"
+      },
+      "cost_per_100km_year": {
+        "name": "Cost per 100 km this year"
+      },
+      "cost_per_100km_total": {
+        "name": "Cost per 100 km"
+      },
+      "model_cost_per_100km": {
+        "name": "Model cost per 100 km"
+      },
+      "model_cost_per_100km_tomorrow": {
+        "name": "Model cost per 100 km tomorrow"
+      },
+      "cost_month_projection": {
+        "name": "Projected driving cost this month"
+      },
+      "charge_to_target_cost": {
+        "name": "Cost to charge to target"
+      },
+      "fuel_savings": {
+        "name": "Saved vs fuel"
+      },
+      "solar_savings": {
+        "name": "Saved by solar"
+      },
+      "consumption_by_temperature": {
+        "name": "Measured consumption"
+      },
+      "last_trip": {
+        "name": "Last trip"
+      },
+      "parked_energy": {
+        "name": "Energy used while parked"
+      },
+      "capacity_estimate": {
+        "name": "Capacity estimate"
       }
     },
     "binary_sensor": {
@@ -311,7 +380,8 @@
           "event_type": {
             "state": {
               "weekly_summary": "Weekly summary",
-              "calibration": "Calibration"
+              "calibration": "Calibration",
+              "trip_finished": "Trip finished"
             }
           }
         }

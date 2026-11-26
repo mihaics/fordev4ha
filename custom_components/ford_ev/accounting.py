@@ -10,6 +10,8 @@ from dataclasses import dataclass, replace
 # A SoC rise of this many points while unplugged is treated as charging, not regeneration.
 UNPLUGGED_CHARGE_POINTS = 5.0
 REGEN_CREDIT_MAX = 100.0
+# Charging history needed before its average price is used to value the battery.
+SEED_MIN_KWH = 5.0
 
 
 @dataclass
@@ -96,3 +98,31 @@ def charger_increment(last_reading: float | None, reading: float) -> float:
     if reading >= last_reading:
         return reading - last_reading
     return reading
+
+
+def consume_value(value: float, energy_before_kwh: float, used_kwh: float) -> tuple[float, float]:
+    """Cost of used_kwh taken from a battery that held energy_before_kwh worth value.
+
+    The battery is priced as one pool: every kWh in it costs the same, the average of what was
+    paid for the energy charged into it. Returns (cost, remaining value); the value never goes
+    below zero.
+    """
+    if value <= 0 or used_kwh <= 0:
+        return 0.0, max(value, 0.0)
+    share = 1.0 if energy_before_kwh <= 0 else min(used_kwh / energy_before_kwh, 1.0)
+    cost = value * share
+    return cost, value - cost
+
+
+def seed_price(cost: float, charger_kwh: float, scenario_prices: list[float], home_price: float | None) -> float:
+    """Price per kWh of the energy in the battery when cost tracking starts.
+
+    The average paid so far, kept between the lowest and highest configured price; without
+    enough charging history, the home price; else 0.
+    """
+    if charger_kwh >= SEED_MIN_KWH and cost > 0:
+        price = cost / charger_kwh
+        if scenario_prices:
+            price = min(max(price, min(scenario_prices)), max(scenario_prices))
+        return price
+    return home_price or 0.0

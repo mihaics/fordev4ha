@@ -95,6 +95,57 @@ function chargingMarkdown(o) {
   return `**Last charge:** {{ states('${o.last_charge}') if states('${o.last_charge}') not in ['unknown', 'unavailable'] else 'none yet' }}`;
 }
 
+function tripMarkdown(o) {
+  return `**Last trip:** {{ states('${o.last_trip}') if states('${o.last_trip}') not in ['unknown', 'unavailable'] else 'none yet' }}`;
+}
+
+// Jinja: an attribute as a rounded number, or "-" while it has no value.
+const ATTR_MACRO = "{% macro v(id, a, d) %}{% set x = state_attr(id, a) %}{{ x | round(d) if x is number else '-' }}{% endmacro %}";
+
+function costMarkdown(o) {
+  const rows = [
+    ["This week", o.cost_per_100km_week],
+    ["This month", o.cost_per_100km_month],
+    ["This year", o.cost_per_100km_year],
+    ["Since start", o.cost_per_100km_total],
+  ].filter(([, id]) => id);
+  if (!rows.length) return null;
+  const unit = `{{ state_attr('${rows[0][1]}', 'unit_of_measurement') }}`;
+  const lines = rows.map(
+    ([name, id]) =>
+      `| ${name} | {{ v('${id}', 'km', 0) }} | {{ v('${id}', 'charging_cost', 2) }} | {{ v('${id}', 'charging_cost_home', 2) }} | ` +
+      `{{ v('${id}', 'charging_cost_public', 2) }} | {{ v('${id}', 'driving_cost', 2) }} | ` +
+      `{{ states('${id}') | float(0) | round(2) if has_value('${id}') else '-' }} |`,
+  );
+  return `${ATTR_MACRO}
+| | km | Charged | Home | Public | Driven | ${unit} |
+|:--|--:|--:|--:|--:|--:|--:|
+${lines.join("\n")}
+
+**Charged** is what the energy bought in the period cost. **Driven** is what the energy used in the period cost, at the average price of the energy in the battery.`;
+}
+
+function costByTemperatureMarkdown(o) {
+  if (!o.model_cost_per_100km) return null;
+  const id = o.model_cost_per_100km;
+  let text = `{% set rows = state_attr('${id}', 'by_temperature') or [] %}{% set cols = ['home', 'solar', 'public', 'battery'] | select('in', (rows | first | default({})).keys() | list) | list %}**Model: cost per 100 km by temperature and price** ({{ state_attr('${id}', 'unit_of_measurement') }})
+
+| Outside | kWh/100 km |{% for c in cols %} {{ c | capitalize }} |{% endfor %}
+|--:|--:|{% for c in cols %}--:|{% endfor %}
+{% for r in rows %}| {{ r.t }} °C | {{ r.kwh100 }} |{% for c in cols %} {{ r[c] }} |{% endfor %}
+{% endfor %}`;
+  if (o.consumption_by_temperature) {
+    text += `
+{% set bands = state_attr('${o.consumption_by_temperature}', 'by_temperature') or [] %}{% if bands %}**Measured on trips**
+
+| Outside | km | kWh/100 km | Cost/100 km |
+|--:|--:|--:|--:|
+{% for r in bands %}| {{ r.t }} to {{ r.t + 5 }} °C | {{ r.km }} | {{ r.kwh100 if r.kwh100 is not none else '-' }} | {{ r.cost100 if r.cost100 is not none else '-' }} |
+{% endfor %}{% endif %}`;
+  }
+  return text;
+}
+
 const NOTIFY_ROWS = [
   ["charging", "Charging"],
   ["unlocked", "Unlocked"],
@@ -138,6 +189,11 @@ export function buildView(vehicle) {
       tile(o.consumption_week, "kWh/100 km week"),
       tile(o.consumption_month, "kWh/100 km month"),
       tile(o.car_full_range, "Car range at 100 %"),
+      tile(o.distance_year, "km this year"),
+      tile(o.consumption_year, "kWh/100 km year"),
+      tile(o.consumption_by_temperature, "kWh/100 km on trips"),
+      tile(o.parked_energy, "Used while parked"),
+      o.last_trip ? { type: "markdown", content: tripMarkdown(o) } : null,
       statistics("km per day", [f.odometer ? { entity: f.odometer, name: "Distance" } : null], "change", "day", 30, "bar"),
       statistics("Energy used per week (kWh)", [o.energy_used ? { entity: o.energy_used, name: "Energy used" } : null], "change", "week", 90, "bar"),
       statistics("Car range at 100 %", [o.car_full_range ? { entity: o.car_full_range, name: "Car" } : null], "mean", "day", 90, "line"),
@@ -152,6 +208,7 @@ export function buildView(vehicle) {
       tile(o.model_range_full_tomorrow, "Model, 100 % tomorrow"),
       tile(o.model_consumption, "Model consumption"),
       tile(o.outside_temperature, "Outside"),
+      tile(o.capacity_estimate, "Capacity estimate"),
       history("Range: car vs model", [
         f.elveh ? { entity: f.elveh, name: "Car" } : null,
         o.model_range ? { entity: o.model_range, name: "Model" } : null,
@@ -183,6 +240,28 @@ export function buildView(vehicle) {
         o.charger_energy ? { entity: o.charger_energy, name: "All" } : null,
         o.charger_energy_home ? { entity: o.charger_energy_home, name: "Home" } : null,
       ], "change", "month", 365, "bar"),
+    ]),
+    section("Costs", [
+      tile(o.cost_per_100km_week, "Cost/100 km week"),
+      tile(o.cost_per_100km_month, "Cost/100 km month"),
+      tile(o.cost_per_100km_year, "Cost/100 km year"),
+      tile(o.cost_per_100km_total, "Cost/100 km since start"),
+      tile(o.model_cost_per_100km, "Model cost/100 km now"),
+      tile(o.model_cost_per_100km_tomorrow, "Model cost/100 km tomorrow"),
+      tile(o.battery_energy_price, "Battery energy price"),
+      tile(o.charge_to_target_cost, "Cost to charge to target"),
+      tile(o.cost_month_projection, "Projected this month"),
+      tile(o.cost_year, "Charging cost this year"),
+      tile(o.fuel_savings, "Saved vs fuel"),
+      tile(o.solar_savings, "Saved by solar"),
+      costMarkdown(o) ? { type: "markdown", content: costMarkdown(o) } : null,
+      costByTemperatureMarkdown(o) ? { type: "markdown", content: costByTemperatureMarkdown(o) } : null,
+      statistics("Charging cost per month", [
+        o.charging_cost_home ? { entity: o.charging_cost_home, name: "Home" } : null,
+        o.charging_cost_public ? { entity: o.charging_cost_public, name: "Public" } : null,
+      ], "change", "month", 365, "bar"),
+      statistics("Driving cost per month", [o.driving_cost ? { entity: o.driving_cost, name: "Driving cost" } : null], "change", "month", 365, "bar"),
+      statistics("km per month", [f.odometer ? { entity: f.odometer, name: "Distance" } : null], "change", "month", 365, "bar"),
     ]),
     section("Settings", [
       entitiesCard("Settings", [

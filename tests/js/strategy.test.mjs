@@ -14,6 +14,11 @@ const OURS = [
   "plug_in_reminder_soc", "climate_setpoint", "climate_on", "notify_charging", "notify_unlocked",
   "notify_open", "notify_plug_in_reminder", "notify_warning_light", "notify_data_stale",
   "notify_night_activity", "notify_weekly_summary", "notify_calibration", "alert", "charging", "report",
+  "charging_cost_home", "charging_cost_public", "distance_year", "energy_used_year", "charger_energy_year", "cost_year",
+  "consumption_year", "driving_cost", "battery_energy_price", "cost_per_100km_week", "cost_per_100km_month",
+  "cost_per_100km_year", "cost_per_100km_total", "model_cost_per_100km", "model_cost_per_100km_tomorrow",
+  "cost_month_projection", "charge_to_target_cost", "fuel_savings", "solar_savings", "consumption_by_temperature",
+  "last_trip", "parked_energy", "capacity_estimate",
 ];
 const FCQ = [
   "soc", "elveh", "odometer", "ignitionstatus", "evccstatus", "elvehplug", "elvehcharging",
@@ -66,7 +71,7 @@ test("one view per vehicle with sections in order", () => {
   assert.equal(d.title, "Ford EV");
   assert.equal(d.views.length, 2);
   assert.equal(d.views[0].type, "sections");
-  assert.deepEqual(headings(d.views[0]), ["Now", "Location", "Driving", "Range estimate", "Charging", "Settings"]);
+  assert.deepEqual(headings(d.views[0]), ["Now", "Location", "Driving", "Range estimate", "Charging", "Costs", "Settings"]);
 });
 
 test("charge end tile is shown only while charging", () => {
@@ -134,4 +139,21 @@ test("every graph line has its own name, so FordConnect Query names never show",
   for (const g of graphs) {
     for (const e of g.entities) assert.ok(typeof e === "object" && e.name, `${g.title}: ${JSON.stringify(e)}`);
   }
+});
+
+test("costs section has the period table and the temperature table", () => {
+  const view = buildDashboard(fakeHass(1), {}).views[0];
+  const costs = view.sections.find((s) => s.cards[0].heading === "Costs");
+  const text = costs.cards.filter((c) => c.type === "markdown").map((c) => c.content).join("\n");
+  for (const period of ["week", "month", "year", "total"]) assert.match(text, new RegExp(`sensor\\.ford_ev_car_1_cost_per_100km_${period}`));
+  assert.match(text, /by_temperature/);
+  assert.match(text, /Measured on trips/);
+});
+
+test("costs section leaves out sensors a vehicle does not have", () => {
+  const hass = fakeHass(1);
+  delete hass.entities["sensor.ford_ev_car_1_fuel_savings"];
+  delete hass.entities["sensor.ford_ev_car_1_solar_savings"];
+  const refs = referencedEntities(buildDashboard(hass, {}));
+  assert.ok(![...refs].some((e) => e.endsWith("_savings")));
 });

@@ -34,7 +34,7 @@ from .units import state_km, state_number
 EVENT_TYPES: dict[str, list[str]] = {
     "alert": ["unlocked", "open", "warning_light", "data_stale", "night_activity", "plug_in_reminder"],
     "charging": ["session_started", "charging_complete", "charging_stopped_early", "unplugged_while_charging"],
-    "report": ["weekly_summary", "calibration"],
+    "report": ["weekly_summary", "calibration", "trip_finished"],
 }
 NOTIFY_FOR: dict[str, str] = {
     "charging_complete": "charging",
@@ -328,6 +328,7 @@ class AlertManager:
 
         km = week("odometer")
         used = week("energy_used")
+        driving_cost = period_value(periods, "week", "driving_cost", totals)
         engine.emit(
             "report",
             "weekly_summary",
@@ -338,6 +339,8 @@ class AlertManager:
                 "charger_energy": week("charger_energy"),
                 "charger_energy_home": week("charger_energy_home"),
                 "cost": week("cost"),
+                "driving_cost": driving_cost,
+                "cost_per_100km": driving_cost / km * 100 if driving_cost is not None and km >= 10 else None,
                 "soc": state_number(engine.fcq_state("soc")),
             },
         )
@@ -433,8 +436,14 @@ def build_notification(event_type: str, data: dict[str, Any], currency: str) -> 
         message += (
             f". Charged {_num(data.get('charger_energy'), '.1f')} kWh, "
             f"{_num(data.get('charger_energy_home'), '.1f')} kWh at home, "
-            f"cost {_num(data.get('cost'), '.2f')} {currency}. Battery {_num(data.get('soc'))}%."
+            f"cost {_num(data.get('cost'), '.2f')} {currency}."
         )
+        if data.get("driving_cost") is not None:
+            message += f" Driving cost {_num(data['driving_cost'], '.2f')} {currency}"
+            if data.get("cost_per_100km") is not None:
+                message += f" ({_num(data['cost_per_100km'], '.2f')}/100 km)"
+            message += "."
+        message += f" Battery {_num(data.get('soc'))}%."
         return "Weekly summary", message
     if event_type == "calibration":
         return "Range calibrated", str(data.get("summary", ""))
