@@ -7,7 +7,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 
 DOMAIN = "ford_ev"
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 FCQ_DOMAIN = "fordconnect_query"
 FCQ_URL = "https://github.com/marq24/ha-fordconnect-query"
 
