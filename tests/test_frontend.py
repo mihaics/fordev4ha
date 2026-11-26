@@ -25,7 +25,7 @@ async def test_module_url_registered_when_frontend_loaded(hass):
     with patch("custom_components.ford_ev.add_extra_js_url") as add:
         assert await async_setup_component(hass, DOMAIN, {})
     digest = hashlib.sha256(STRATEGY_FILE.read_bytes()).hexdigest()[:8]
-    add.assert_called_once_with(hass, f"{STRATEGY_URL}?v=0.3.0-{digest}")
+    add.assert_called_once_with(hass, f"{STRATEGY_URL}?v=0.4.0-{digest}")
 
 
 async def test_module_url_skipped_without_frontend(hass):
