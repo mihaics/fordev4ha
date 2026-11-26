@@ -119,6 +119,9 @@ export function buildView(vehicle) {
       f.soc ? { type: "gauge", entity: f.soc, name: "Battery", min: 0, max: 100, needle: true, severity: { green: 40, yellow: 20, red: 0 } } : null,
       tile(f.elveh, "Range"),
       tile(o.charging_state, "Charging"),
+      o.charge_end && o.charging_state
+        ? { ...tile(o.charge_end, "Charging ends"), visibility: [{ condition: "state", entity: o.charging_state, state: "charging" }] }
+        : null,
       tile(f.doorlock, "Locks"),
       tile(f.doorstatus, "Doors"),
       tile(f.windowposition, "Windows"),

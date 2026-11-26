@@ -125,7 +125,7 @@ The integration ships a dashboard that builds itself from your vehicle's entitie
 
 There is one view per vehicle, with these sections:
 
-- **Now:** battery, range, charging state, locks, doors, windows, ignition, warning lights, odometer, last update.
+- **Now:** battery, range, charging state, charging end time (while charging), locks, doors, windows, ignition, warning lights, odometer, last update.
 - **Location:** map.
 - **Driving:** km per day, week and month; consumption; trends.
 - **Range estimate:** car vs model for range and state of charge; range at 100 % now and tomorrow; a table by temperature; calibration status.
@@ -230,6 +230,7 @@ Entity IDs follow the pattern `<platform>.ev_<entity name>`, for example `sensor
 | Car range at 100 % | The car's range scaled to a full battery: a trend of the car's own efficiency figure. |
 | Car km per % | The car's range per percent of charge. |
 | Charging state | Unplugged / plugged in, not charging / charging. |
+| Charging ends | When the car expects the running charge to finish. Empty when not charging. |
 | Data age | Minutes since the car last reported. |
 | Last charge | Summary of the last charging session. Its history is the charging log. |
 | Charging (binary sensor) | On while a charging session is open. |

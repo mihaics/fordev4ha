@@ -1,6 +1,6 @@
 """Tests for sensor, binary sensor, number and switch entities."""
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from homeassistant.helpers import device_registry as dr, entity_registry as er
@@ -17,7 +17,7 @@ SENSOR_KEYS = [
     "energy_used_week", "energy_used_month", "charger_energy_week", "charger_energy_month",
     "charger_energy_home_week", "charger_energy_home_month", "cost_week", "cost_month",
     "consumption_week", "consumption_month", "car_full_range", "car_km_per_percent",
-    "charging_state", "data_age", "last_charge", "outside_temperature",
+    "charging_state", "charge_end", "data_age", "last_charge", "outside_temperature",
     "model_consumption", "model_soc", "model_range", "model_range_full", "model_range_full_tomorrow",
     "drive_factor", "climate_factor", "cycle_error", "calibrations", "last_calibration",
 ]
@@ -87,6 +87,32 @@ async def test_charging_state_enum(hass, fcq):
     await fcq.set("evccstatus", "C")
     assert state(hass, "sensor", "charging_state").state == "charging"
     assert state(hass, "binary_sensor", "charging_session").state == "on"
+
+
+async def test_charge_end(hass, fcq):
+    await async_setup_ford_ev(hass, fcq)
+    end = dt_util.now().replace(microsecond=0) + timedelta(hours=2)
+    # The car keeps reporting a time to full charge while not charging: ignore it then.
+    await fcq.set("elvehcharging", "NOT_PLUGGED_IN", {"estimatedEndTime": end})
+    assert state(hass, "sensor", "charge_end").state == "unknown"
+    assert state(hass, "sensor", "charge_end").attributes["device_class"] == "timestamp"
+
+    await fcq.set("evccstatus", "C")
+    await fcq.set("elvehcharging", "IN_PROGRESS", {"estimatedEndTime": end})
+    assert dt_util.parse_datetime(state(hass, "sensor", "charge_end").state) == end
+
+    # An ISO string (e.g. a state set over the REST API) works too; a naive or broken value does not.
+    later = end + timedelta(minutes=30)
+    await fcq.set("elvehcharging", "IN_PROGRESS", {"estimatedEndTime": later.isoformat()})
+    assert dt_util.parse_datetime(state(hass, "sensor", "charge_end").state) == later
+    await fcq.set("elvehcharging", "IN_PROGRESS", {"estimatedEndTime": "2026-11-26T10:00:00"})
+    assert state(hass, "sensor", "charge_end").state == "unknown"
+    await fcq.set("elvehcharging", "IN_PROGRESS", {"estimatedEndTime": "soon"})
+    assert state(hass, "sensor", "charge_end").state == "unknown"
+
+    await fcq.set("elvehcharging", "IN_PROGRESS", {"estimatedEndTime": end})
+    await fcq.set("evccstatus", "B")
+    assert state(hass, "sensor", "charge_end").state == "unknown"
 
 
 async def test_model_sensors(hass, fcq):

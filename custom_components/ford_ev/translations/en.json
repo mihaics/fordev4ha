@@ -185,6 +185,9 @@
           "charging": "Charging"
         }
       },
+      "charge_end": {
+        "name": "Charging ends"
+      },
       "data_age": {
         "name": "Data age"
       },

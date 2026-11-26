@@ -187,6 +187,23 @@ def _last_charge(engine: FordEvEngine) -> str | None:
     return str(last.get("summary", ""))[:255] if last else None
 
 
+def _charge_end(engine: FordEvEngine) -> datetime | None:
+    """When the car expects the running charge to finish; only while charging.
+
+    FCQ derives estimatedEndTime from the car's time to full charge, which the car keeps
+    reporting while it is not charging.
+    """
+    if engine.last_valid("evccstatus") != "C":
+        return None
+    state = engine.fcq_state("elvehcharging")
+    value = state.attributes.get("estimatedEndTime") if state is not None else None
+    if isinstance(value, str):
+        value = dt_util.parse_datetime(value)
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        return None
+    return value
+
+
 # ---------------------------------------------------------------------- descriptions
 
 _ENERGY = {
@@ -270,6 +287,7 @@ SENSORS: tuple[FordEvSensorDescription, ...] = (
         device_class=SensorDeviceClass.ENUM,
         options=list(CHARGING_STATES.values()),
     ),
+    FordEvSensorDescription(key="charge_end", value_fn=_charge_end, device_class=SensorDeviceClass.TIMESTAMP),
     FordEvSensorDescription(
         key="data_age",
         value_fn=_data_age,

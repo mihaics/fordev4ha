@@ -8,7 +8,7 @@ const OURS = [
   "distance_day", "distance_week", "distance_month", "energy_used_week", "energy_used_month",
   "charger_energy_week", "charger_energy_month", "charger_energy_home_week", "charger_energy_home_month",
   "cost_week", "cost_month", "consumption_week", "consumption_month", "car_full_range", "car_km_per_percent",
-  "charging_state", "data_age", "last_charge", "outside_temperature", "model_consumption", "model_soc",
+  "charging_state", "charge_end", "data_age", "last_charge", "outside_temperature", "model_consumption", "model_soc",
   "model_range", "model_range_full", "model_range_full_tomorrow", "drive_factor", "climate_factor",
   "cycle_error", "calibrations", "last_calibration", "charging_session", "charge_target",
   "plug_in_reminder_soc", "climate_setpoint", "climate_on", "notify_charging", "notify_unlocked",
@@ -67,6 +67,14 @@ test("one view per vehicle with sections in order", () => {
   assert.equal(d.views.length, 2);
   assert.equal(d.views[0].type, "sections");
   assert.deepEqual(headings(d.views[0]), ["Now", "Location", "Driving", "Range estimate", "Charging", "Settings"]);
+});
+
+test("charge end tile is shown only while charging", () => {
+  const view = buildDashboard(fakeHass(1), {}).views[0];
+  const now = view.sections.find((s) => s.cards[0].heading === "Now");
+  const tile = now.cards.find((c) => c.entity === "sensor.ford_ev_car_1_charge_end");
+  assert.ok(tile);
+  assert.deepEqual(tile.visibility, [{ condition: "state", entity: "sensor.ford_ev_car_1_charging_state", state: "charging" }]);
 });
 
 test("every referenced entity exists", () => {

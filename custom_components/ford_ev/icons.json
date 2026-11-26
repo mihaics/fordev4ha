@@ -12,6 +12,7 @@
       "car_full_range": {"default": "mdi:map-marker-distance"},
       "car_km_per_percent": {"default": "mdi:battery-arrow-down-outline"},
       "charging_state": {"default": "mdi:ev-station"},
+      "charge_end": {"default": "mdi:battery-clock"},
       "data_age": {"default": "mdi:cloud-clock-outline"},
       "last_charge": {"default": "mdi:history"},
       "model_consumption": {"default": "mdi:chart-bell-curve-cumulative"},
