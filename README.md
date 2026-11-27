@@ -150,7 +150,7 @@ There is one view per vehicle, with these sections:
 - **Driving:** km per day, week, month and year; consumption; the last trip; energy used while parked; trends.
 - **Range estimate:** car vs model for range and state of charge; range at 100 % now and tomorrow; a table by temperature; calibration status.
 - **Charging:** energy and cost, the last session and the charging log.
-- **Costs:** cost per 100 km for the week, month, year and since the start; a table of charging and driving cost per period, with the km tracked alongside them (a period that began before installation is labelled with the day tracking started); the model's cost per 100 km by temperature and price next to the consumption measured on trips; cost to charge to the target; savings; charging cost, driving cost and distance per month.
+- **Costs:** cost per 100 km for the week, month, year and since the start; a table of the km tracked, charging cost, driving cost and cost per 100 km per period (a period that began before installation shows the day tracking started; the split between home and public charging is in the cost per 100 km sensors' attributes and the monthly charging cost chart); the model's cost per 100 km by temperature and price next to the consumption measured on trips; cost to charge to the target; savings; charging cost, driving cost and distance per month.
 - **Settings:** the settings and notification switches listed above.
 
 You can also create it in YAML. Create a new dashboard **from scratch**, open the **raw configuration editor**, and replace everything with:
