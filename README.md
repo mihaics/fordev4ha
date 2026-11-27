@@ -153,6 +153,31 @@ There is one view per vehicle, with these sections:
 - **Costs:** cost per 100 km for the week, month, year and since the start; a table of the km tracked, charging cost, driving cost and cost per 100 km per period (a period that began before installation shows the day tracking started; the split between home and public charging is in the cost per 100 km sensors' attributes and the monthly charging cost chart); the model's cost per 100 km by temperature and price next to the consumption measured on trips; cost to charge to the target; savings; charging cost, driving cost and distance per month.
 - **Settings:** the settings and notification switches listed above.
 
+On a phone the sections are stacked in one column:
+
+<table>
+  <tr>
+    <th>Now</th>
+    <th>Driving</th>
+    <th>Charging</th>
+  </tr>
+  <tr>
+    <td valign="top"><img src="docs/screenshots/now.png" width="260" alt="Now section: battery gauge, range, charging state, locks, doors, windows, ignition, warning lights, odometer"></td>
+    <td valign="top"><img src="docs/screenshots/driving.png" width="260" alt="Driving section: distance and consumption per period, last trip, km per day, energy per week, car range and battery history"></td>
+    <td valign="top"><img src="docs/screenshots/charging.png" width="260" alt="Charging section: energy and cost charged, last charge, charging log, energy charged per month"></td>
+  </tr>
+  <tr>
+    <th>Range estimate</th>
+    <th>Costs</th>
+    <th>Settings</th>
+  </tr>
+  <tr>
+    <td valign="top"><img src="docs/screenshots/range.png" width="260" alt="Range estimate section: car vs model range and state of charge, range at 100 % by temperature, learned factors, calibrations"></td>
+    <td valign="top"><img src="docs/screenshots/costs.png" width="260" alt="Costs section: cost per 100 km, cost table per period, model cost by temperature and price, monthly charging cost, driving cost and distance"></td>
+    <td valign="top"><img src="docs/screenshots/settings.png" width="260" alt="Settings section: climate, charge target and plug-in reminder settings, notification switches"></td>
+  </tr>
+</table>
+
 You can also create it in YAML. Create a new dashboard **from scratch**, open the **raw configuration editor**, and replace everything with:
 
 ```yaml
