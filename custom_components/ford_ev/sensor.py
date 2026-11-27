@@ -234,6 +234,15 @@ def _cost_per_100km(period: str) -> Callable[[FordEvEngine], float | None]:
     return value
 
 
+def _tracked_since(engine: FordEvEngine, period: str) -> str | None:
+    """The day tracking started, when the period began before it did."""
+    periods = engine.state.periods
+    snap, lifetime = periods.snapshots.get(period), periods.snapshots.get(LIFETIME)
+    if snap is None or lifetime is None:
+        return None
+    return lifetime.start if lifetime.start > snap.start else None
+
+
 def _cost_per_100km_attrs(period: str) -> Callable[[FordEvEngine], dict[str, Any]]:
     def attrs(engine: FordEvEngine) -> dict[str, Any]:
         def get(counter: str) -> float | None:
@@ -254,6 +263,7 @@ def _cost_per_100km_attrs(period: str) -> Callable[[FordEvEngine], dict[str, Any
             snapshot = engine.state.periods.snapshots.get(LIFETIME)
             out["since"] = snapshot.start if snapshot else None
         else:
+            out["since"] = _tracked_since(engine, period)
             previous = engine.state.periods.previous.get(period, {})
             out["previous_period"] = _round(_per_100(previous.get("driving_cost"), previous.get("odometer")), 2)
         return out
@@ -474,9 +484,9 @@ SENSORS: tuple[FordEvSensorDescription, ...] = (
     FordEvSensorDescription(
         key="charging_cost_public", value_fn=lambda e: e.state.cost_public, state_class=SensorStateClass.TOTAL, **_MONEY
     ),
-    _period_sensor("distance_day", "day", "odometer", _KM),
-    _period_sensor("distance_week", "week", "odometer", _KM),
-    _period_sensor("distance_month", "month", "odometer", _KM),
+    _period_sensor("distance_day", "day", "distance", _KM),
+    _period_sensor("distance_week", "week", "distance", _KM),
+    _period_sensor("distance_month", "month", "distance", _KM),
     _period_sensor("energy_used_week", "week", "energy_used", _ENERGY),
     _period_sensor("energy_used_month", "month", "energy_used", _ENERGY),
     _period_sensor("charger_energy_week", "week", "charger_energy", _ENERGY),
@@ -487,7 +497,7 @@ SENSORS: tuple[FordEvSensorDescription, ...] = (
     _period_sensor("cost_month", "month", "cost", _MONEY),
     FordEvSensorDescription(key="consumption_week", value_fn=_consumption("week"), **_CONSUMPTION),
     FordEvSensorDescription(key="consumption_month", value_fn=_consumption("month"), **_CONSUMPTION),
-    _period_sensor("distance_year", "year", "odometer", _KM),
+    _period_sensor("distance_year", "year", "distance", _KM),
     _period_sensor("energy_used_year", "year", "energy_used", _ENERGY),
     _period_sensor("charger_energy_year", "year", "charger_energy", _ENERGY),
     _period_sensor("cost_year", "year", "cost", _MONEY),

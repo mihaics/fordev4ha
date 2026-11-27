@@ -57,3 +57,28 @@ add_charge:
           max: 10000
           step: 0.01
           mode: box
+set_period_odometer:
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: ford_ev
+    period:
+      required: true
+      selector:
+        select:
+          options:
+            - day
+            - week
+            - month
+            - year
+          translation_key: period
+    odometer:
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 2000000
+          step: 1
+          mode: box

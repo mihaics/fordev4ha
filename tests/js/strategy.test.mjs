@@ -150,6 +150,18 @@ test("costs section has the period table and the temperature table", () => {
   assert.match(text, /Measured on trips/);
 });
 
+test("cost table labels rows that began before tracking and names the km tracked", () => {
+  const view = buildDashboard(fakeHass(1), {}).views[0];
+  const costs = view.sections.find((s) => s.cards[0].heading === "Costs");
+  const table = costs.cards.find((c) => c.type === "markdown" && c.content.includes("cost_per_100km_week")).content;
+  assert.match(table, /\| \| Tracked km \|/);
+  for (const period of ["week", "month", "year"]) {
+    assert.match(table, new RegExp(`state_attr\\('sensor\\.ford_ev_car_1_cost_per_100km_${period}', 'since'\\)`));
+  }
+  assert.doesNotMatch(table, /state_attr\('sensor\.ford_ev_car_1_cost_per_100km_total', 'since'\)/);
+  assert.match(table, /\| Since start \|/);
+});
+
 test("costs section leaves out sensors a vehicle does not have", () => {
   const hass = fakeHass(1);
   delete hass.entities["sensor.ford_ev_car_1_fuel_savings"];

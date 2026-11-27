@@ -21,11 +21,14 @@ from .alerts import AlertManager
 from .const import CONF_DEVICE_ID, CONF_VIN, DOMAIN, VERSION, merged_config
 from .discovery import async_discover_vehicles, async_get_vehicle
 from .engine import FordEvConfigEntry, FordEvEngine, FordEvRuntime
+from .periods import PERIODS
+from .units import to_km
 
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.EVENT, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 SERVICE_RESET_RANGE_MODEL = "reset_range_model"
 SERVICE_ADD_CHARGE = "add_charge"
+SERVICE_SET_PERIOD_ODOMETER = "set_period_odometer"
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
 ATTR_DATE = "date"
 ATTR_ENERGY_KWH = "energy_kwh"
@@ -33,6 +36,8 @@ ATTR_LOCATION = "location"
 ATTR_CHARGING_TYPE = "charging_type"
 ATTR_SOLAR_SHARE = "solar_share"
 ATTR_COST = "cost"
+ATTR_PERIOD = "period"
+ATTR_ODOMETER = "odometer"
 STRATEGY_URL = f"/{DOMAIN}/ford-ev-strategy.js"
 STRATEGY_FILE = Path(__file__).parent / "frontend" / "ford-ev-strategy.js"
 
@@ -83,6 +88,15 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             cost=call.data.get(ATTR_COST),
         )
 
+    async def set_period_odometer(call: ServiceCall) -> None:
+        engine = engine_for(call)
+        # In the instance's unit system, like the odometer FordConnect Query shows.
+        km = to_km(call.data[ATTR_ODOMETER], hass.config.units.length_unit)
+        try:
+            engine.set_period_odometer(call.data[ATTR_PERIOD], km)
+        except ValueError as err:
+            raise ServiceValidationError(str(err)) from err
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_RESET_RANGE_MODEL,
@@ -102,6 +116,18 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 vol.Optional(ATTR_CHARGING_TYPE): vol.In(["ac", "dc"]),
                 vol.Optional(ATTR_SOLAR_SHARE): vol.All(vol.Coerce(float), vol.Range(min=0, max=1)),
                 vol.Optional(ATTR_COST): vol.All(vol.Coerce(float), vol.Range(min=0)),
+            }
+        ),
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_PERIOD_ODOMETER,
+        set_period_odometer,
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string,
+                vol.Required(ATTR_PERIOD): vol.In(PERIODS),
+                vol.Required(ATTR_ODOMETER): vol.All(vol.Coerce(float), vol.Range(min=0)),
             }
         ),
     )

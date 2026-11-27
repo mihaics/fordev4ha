@@ -103,22 +103,25 @@ function tripMarkdown(o) {
 const ATTR_MACRO = "{% macro v(id, a, d) %}{% set x = state_attr(id, a) %}{{ x | round(d) if x is number else '-' }}{% endmacro %}";
 
 function costMarkdown(o) {
+  // A period that began before tracking did says since when it counts.
+  const since = (id) =>
+    `{% set s = state_attr('${id}', 'since') %}{% if s %} (since {{ strptime(s, '%Y-%m-%d').strftime('%-d %b') }}){% endif %}`;
   const rows = [
-    ["This week", o.cost_per_100km_week],
-    ["This month", o.cost_per_100km_month],
-    ["This year", o.cost_per_100km_year],
-    ["Since start", o.cost_per_100km_total],
+    ["This week", o.cost_per_100km_week, true],
+    ["This month", o.cost_per_100km_month, true],
+    ["This year", o.cost_per_100km_year, true],
+    ["Since start", o.cost_per_100km_total, false],
   ].filter(([, id]) => id);
   if (!rows.length) return null;
   const unit = `{{ state_attr('${rows[0][1]}', 'unit_of_measurement') }}`;
   const lines = rows.map(
-    ([name, id]) =>
-      `| ${name} | {{ v('${id}', 'km', 0) }} | {{ v('${id}', 'charging_cost', 2) }} | {{ v('${id}', 'charging_cost_home', 2) }} | ` +
+    ([name, id, label]) =>
+      `| ${name}${label ? since(id) : ""} | {{ v('${id}', 'km', 0) }} | {{ v('${id}', 'charging_cost', 2) }} | {{ v('${id}', 'charging_cost_home', 2) }} | ` +
       `{{ v('${id}', 'charging_cost_public', 2) }} | {{ v('${id}', 'driving_cost', 2) }} | ` +
       `{{ states('${id}') | float(0) | round(2) if has_value('${id}') else '-' }} |`,
   );
   return `${ATTR_MACRO}
-| | km | Charged | Home | Public | Driven | ${unit} |
+| | Tracked km | Charged | Home | Public | Driven | ${unit} |
 |:--|--:|--:|--:|--:|--:|--:|
 ${lines.join("\n")}
 

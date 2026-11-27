@@ -90,6 +90,34 @@ def seed_long_periods(st: PeriodState, now_local: datetime) -> PeriodState:
     return PeriodState(snapshots, dict(st.previous))
 
 
+def add_distance(st: PeriodState) -> PeriodState:
+    """Give state from before the distance counter existed its baselines, copied from the odometer.
+
+    "distance" counts the same km as "odometer", but its baseline can be corrected for a period
+    that began before tracking did. "odometer" stays the km tracked alongside the energy and cost.
+    """
+    snapshots = {
+        k: PeriodSnapshot(s.start, {**s.values, "distance": s.values["odometer"]})
+        if "odometer" in s.values and "distance" not in s.values
+        else s
+        for k, s in st.snapshots.items()
+    }
+    previous = {
+        k: {**v, "distance": v["odometer"]} if "odometer" in v and "distance" not in v else v
+        for k, v in st.previous.items()
+    }
+    return PeriodState(snapshots, previous)
+
+
+def set_distance_start(st: PeriodState, period: str, odometer_km: float) -> PeriodState:
+    """Set the odometer at the start of the current period, for the distance counter only."""
+    snap = st.snapshots.get(period)
+    if snap is None:
+        raise ValueError(f"no {period} period yet")
+    snapshots = {**st.snapshots, period: PeriodSnapshot(snap.start, {**snap.values, "distance": odometer_km})}
+    return PeriodState(snapshots, dict(st.previous))
+
+
 def period_value(st: PeriodState, period: str, counter: str, totals: dict[str, float]) -> float | None:
     """Amount of a counter since the start of the current period."""
     snap = st.snapshots.get(period)

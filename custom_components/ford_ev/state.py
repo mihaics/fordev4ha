@@ -7,7 +7,7 @@ from typing import Any
 
 from .accounting import SocAccountingState
 from .const import NOTIFY_DEFAULT_OFF, NOTIFY_KEYS
-from .periods import PeriodSnapshot, PeriodState
+from .periods import PeriodSnapshot, PeriodState, add_distance
 from .range_model import RangeModelState
 
 STORAGE_VERSION = 1
@@ -103,9 +103,11 @@ class EngineState:
         settings.notify = {**_default_notify(), **(settings.notify or {})}
         st.settings = settings
         periods = data.get("periods") or {}
-        st.periods = PeriodState(
-            snapshots={k: _build(PeriodSnapshot, v) for k, v in (periods.get("snapshots") or {}).items()},
-            previous=dict(periods.get("previous") or {}),
+        st.periods = add_distance(
+            PeriodState(
+                snapshots={k: _build(PeriodSnapshot, v) for k, v in (periods.get("snapshots") or {}).items()},
+                previous=dict(periods.get("previous") or {}),
+            )
         )
         session = data.get("session")
         st.session = _build(ChargingSession, session) if session else None

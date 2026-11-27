@@ -50,7 +50,7 @@ from .const import (
     merged_config,
 )
 from .discovery import FcqVehicle
-from .periods import PERIODS, period_start, roll_periods, seed_long_periods
+from .periods import PERIODS, period_start, roll_periods, seed_long_periods, set_distance_start
 from .range_model import (
     FALLBACK_TEMP_C,
     MIN_TRIP_KM,
@@ -366,6 +366,7 @@ class FordEvEngine:
             totals["driving_cost"] = st.driving_cost
         if st.last_odometer_km is not None:
             totals["odometer"] = st.last_odometer_km
+            totals["distance"] = st.last_odometer_km
         return totals
 
     def set_setting(self, name: str, value: Any) -> None:
@@ -591,6 +592,22 @@ class FordEvEngine:
         for counter, value in added.items():
             setattr(st, counter, getattr(st, counter) + value)
         self._shift_periods(dt_util.as_local(when).date(), added)
+        self.notify_listeners()
+        self.save()
+
+    def set_period_odometer(self, period: str, odometer_km: float) -> None:
+        """Set the odometer at the start of the current period, for its distance only.
+
+        For a period that began before tracking did. Consumption and costs per km keep the km
+        tracked alongside the energy, so they do not change.
+        """
+        current = self.state.last_odometer_km
+        if current is None:
+            raise ValueError("the odometer is not known yet")
+        if odometer_km > current:
+            raise ValueError(f"{odometer_km:g} km is more than the odometer now, {current:g} km")
+        self._roll()
+        self.state.periods = set_distance_start(self.state.periods, period, odometer_km)
         self.notify_listeners()
         self.save()
 

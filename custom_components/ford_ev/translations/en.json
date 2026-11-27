@@ -110,6 +110,14 @@
         "ac": "AC",
         "dc": "DC"
       }
+    },
+    "period": {
+      "options": {
+        "day": "Today",
+        "week": "This week",
+        "month": "This month",
+        "year": "This year"
+      }
     }
   },
   "entity": {
@@ -430,6 +438,24 @@
         "cost": {
           "name": "Cost",
           "description": "The amount actually paid, for example from an invoice. Replaces the calculated cost."
+        }
+      }
+    },
+    "set_period_odometer": {
+      "name": "Set the odometer at the start of a period",
+      "description": "Corrects the distance of the current day, week, month or year when it began before the integration was installed, for example with the odometer when the car was delivered. Only the distance changes: consumption and costs per 100 km stay on the km tracked since installation. Long-term statistics record the difference at the time of the correction.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Vehicle",
+          "description": "Required when more than one vehicle is set up."
+        },
+        "period": {
+          "name": "Period",
+          "description": "The current period to correct."
+        },
+        "odometer": {
+          "name": "Odometer",
+          "description": "The odometer at the start of the period, or when the car was delivered if that was later. In km, or in miles when Home Assistant uses the US customary unit system, whatever unit an entity is displayed in. At most the odometer now."
         }
       }
     }

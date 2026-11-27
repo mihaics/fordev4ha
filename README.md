@@ -117,6 +117,10 @@ The result is an estimate: the car reports energy in 0.5 kWh steps, and a foreca
 
 The **Add a past charge** action (`ford_ev.add_charge`) counts a charge the integration did not see, for example before it was installed. It takes the date, the energy as the car or its app reports it, home or public, and optionally the charging type, the solar share and the amount actually paid. The charge goes into the lifetime totals and into the week, month and year it belongs to; periods that started later do not change. The range model and the cost of driving are not affected. To price a charge that is already counted, for example a public charge from its invoice, use energy 0 and the cost.
 
+### Distance before installation
+
+A period that began before the integration was installed counts only the km since installation. The **Set the odometer at the start of a period** action (`ford_ev.set_period_odometer`) corrects the distance of the current day, week, month or year: give the odometer at the start of the period, or when the car was delivered if that was later. For a car delivered this year with 10 km, set 10 for the year and, if it was delivered this month, for the month. The odometer is in km, or in miles when Home Assistant uses the US customary unit system, whatever unit an entity is displayed in. Only the distance sensors change: consumption and costs per 100 km keep the km tracked since installation, because the energy before it is not known. The correction applies to the current period only and ends with it. The distance sensors' long-term statistics record the difference at the time of the correction, not on the days it was driven.
+
 ### How the cost of driving is calculated
 
 The charging cost of a week says what you paid that week, not what your driving cost: a full battery lasts for days, so one week shows a large amount and the next one nothing. The cost of driving is therefore calculated from the energy used:
@@ -146,7 +150,7 @@ There is one view per vehicle, with these sections:
 - **Driving:** km per day, week, month and year; consumption; the last trip; energy used while parked; trends.
 - **Range estimate:** car vs model for range and state of charge; range at 100 % now and tomorrow; a table by temperature; calibration status.
 - **Charging:** energy and cost, the last session and the charging log.
-- **Costs:** cost per 100 km for the week, month, year and since the start; a table of charging and driving cost per period; the model's cost per 100 km by temperature and price next to the consumption measured on trips; cost to charge to the target; savings; charging cost, driving cost and distance per month.
+- **Costs:** cost per 100 km for the week, month, year and since the start; a table of charging and driving cost per period, with the km tracked alongside them (a period that began before installation is labelled with the day tracking started); the model's cost per 100 km by temperature and price next to the consumption measured on trips; cost to charge to the target; savings; charging cost, driving cost and distance per month.
 - **Settings:** the settings and notification switches listed above.
 
 You can also create it in YAML. Create a new dashboard **from scratch**, open the **raw configuration editor**, and replace everything with:
@@ -241,7 +245,7 @@ Entity IDs follow the pattern `<platform>.ev_<entity name>`, for example `sensor
 | Energy charged from solar | Estimated billed energy covered by solar at home. Cumulative. |
 | Charging cost | Cost of all charging, home and public. Cumulative. |
 | Charging cost at home / Public charging cost | The same, split by location. Cumulative. |
-| Distance today / this week / this month / this year | km driven in the period. |
+| Distance today / this week / this month / this year | km driven in the period. A period that began before installation counts from installation unless corrected, see [Distance before installation](#distance-before-installation). |
 | Energy used, energy charged, energy charged at home, charging cost: this week / this month | The same figures per period. Attribute: the previous period. |
 | Energy used, energy charged, charging cost: this year | The same for the year. It starts when the integration first sees the year. |
 | Consumption this week / this month / this year | Energy used per 100 km. Empty below 10 km. |
@@ -262,7 +266,7 @@ Entity IDs follow the pattern `<platform>.ev_<entity name>`, for example `sensor
 |---|---|
 | Driving cost | Cost of the energy used, at the average price of the energy in the battery. Cumulative. |
 | Battery energy price | Average price per kWh of the energy now in the battery. Attribute: its total value. |
-| Cost per 100 km: this week / this month / this year / since the start | Driving cost per 100 km. Empty below 10 km. Attributes: km, driving cost, charging cost (total, home, public), energy charged, solar energy, average price paid per kWh, the previous period. |
+| Cost per 100 km: this week / this month / this year / since the start | Driving cost per 100 km. Empty below 10 km. Attributes: km, driving cost, charging cost (total, home, public), energy charged, solar energy, average price paid per kWh, the previous period, and since (the day tracking started, when the period began before it). |
 | Model cost per 100 km | Model consumption now at the battery energy price. Attributes: the prices per kWh and a table by outside temperature and price. |
 | Model cost per 100 km tomorrow | The same at tomorrow's forecast temperature. |
 | Projected driving cost this month | The month so far extended to the end of the month. Empty until 3 days of the month are tracked. Attribute: projected km. |
