@@ -87,8 +87,8 @@ function rangeMarkdown(o, f) {
 {% for r in state_attr('${o.model_range_full}', 'by_temperature') or [] %}| {{ r.t }} °C | {{ r.km }} km | {{ r.kwh100 }} |
 {% endfor %}
 **Calibrations:** {{ cal }}, last {{ as_timestamp(states('${o.last_calibration}'), 0) | timestamp_custom('%d.%m %H:%M') if states('${o.last_calibration}') not in ['unknown', 'unavailable'] else 'never' }}. Drive x${num(o.drive_factor, 2)}, climate x${num(o.climate_factor, 2)}, last error {{ states('${o.cycle_error}') | float(0) | round(1) if states('${o.cycle_error}') not in ['unknown', 'unavailable'] else '-' }} %.
-{% set capest = state_attr('${o.last_calibration}', 'capacity_estimate_kwh') %}{% if capest %}**Capacity estimate:** {{ capest | round(1) }} kWh.
-{% endif %}**This cycle:** ${attr(o.calibrations, "cycle_km")} km, ${attr(o.calibrations, "cycle_charged_kwh")} kWh charged, model ${attr(o.calibrations, "cycle_model_kwh")} kWh.`;
+{% set capest = state_attr('${o.last_calibration}', 'capacity_estimate_kwh') %}{% if capest %}**Capacity estimate:** {{ capest | round(1) }} kWh at the charger.
+{% endif %}**This cycle:** ${attr(o.calibrations, "cycle_km")} km, ${attr(o.calibrations, "cycle_charged_kwh")} kWh charged{% set refill = state_attr('${o.calibrations}', 'cycle_refill_kwh') %}{% if refill %} ({{ refill | round(1) }} kWh of it to fill the battery from where it was at setup){% endif %}, model ${attr(o.calibrations, "cycle_model_kwh")} kWh.`;
 }
 
 function chargingMarkdown(o) {
@@ -97,6 +97,18 @@ function chargingMarkdown(o) {
 
 function tripMarkdown(o) {
   return `**Last trip:** {{ states('${o.last_trip}') if states('${o.last_trip}') not in ['unknown', 'unavailable'] else 'none yet' }}`;
+}
+
+function tripStatsMarkdown(o) {
+  const id = o.trips;
+  return `${ATTR_MACRO}
+{% if (state_attr('${id}', 'trips') or 0) > 0 %}**Last {{ state_attr('${id}', 'trips') }} trips:** median {{ v('${id}', 'median_km', 1) }} km, longest {{ v('${id}', 'longest_km', 0) }} km, {{ v('${id}', 'short_trip_km_pct', 0) }} % of the km in trips under 10 km.
+{% set err = state_attr('${id}', 'model_error_pct') %}{% if err is number %}**Model on trips of 20 km or more:** {{ '%+.1f' | format(err) }} % ({{ state_attr('${id}', 'model_error_trips') }} trips).
+{% endif %}{% set rows = state_attr('${id}', 'by_speed') or [] %}{% if rows %}
+| Average speed | km | kWh/100 km |
+|--:|--:|--:|
+{% for r in rows %}| from {{ r.speed }} km/h | {{ r.km }} | {{ r.kwh100 if r.kwh100 is not none else '-' }} |
+{% endfor %}{% endif %}{% else %}**Trips:** none yet{% endif %}`;
 }
 
 // Jinja: an attribute as a rounded number, or "-" while it has no value.
@@ -141,9 +153,9 @@ function costByTemperatureMarkdown(o) {
     text += `
 {% set bands = state_attr('${o.consumption_by_temperature}', 'by_temperature') or [] %}{% if bands %}**Measured on trips**
 
-| Outside | km | kWh/100 km | Cost/100 km |
-|--:|--:|--:|--:|
-{% for r in bands %}| {{ r.t }} to {{ r.t + 5 }} °C | {{ r.km }} | {{ r.kwh100 if r.kwh100 is not none else '-' }} | {{ r.cost100 if r.cost100 is not none else '-' }} |
+| Outside | km | kWh/100 km | Model | Cost/100 km |
+|--:|--:|--:|--:|--:|
+{% for r in bands %}| {{ r.t }} to {{ r.t + 5 }} °C | {{ r.km }} | {{ r.kwh100 if r.kwh100 is not none else '-' }} | {{ r.model if r.model is not none else '-' }} | {{ r.cost100 if r.cost100 is not none else '-' }} |
 {% endfor %}{% endif %}`;
   }
   return text;
@@ -196,7 +208,10 @@ export function buildView(vehicle) {
       tile(o.consumption_year, "kWh/100 km year"),
       tile(o.consumption_by_temperature, "kWh/100 km on trips"),
       tile(o.parked_energy, "Used while parked"),
+      tile(o.days_of_range, "Days of range"),
+      tile(o.trips, "Trips, 7 days"),
       o.last_trip ? { type: "markdown", content: tripMarkdown(o) } : null,
+      o.trips ? { type: "markdown", content: tripStatsMarkdown(o) } : null,
       statistics("km per day", [f.odometer ? { entity: f.odometer, name: "Distance" } : null], "change", "day", 30, "bar"),
       statistics("Energy used per week (kWh)", [o.energy_used ? { entity: o.energy_used, name: "Energy used" } : null], "change", "week", 90, "bar"),
       statistics("Car range at 100 %", [o.car_full_range ? { entity: o.car_full_range, name: "Car" } : null], "mean", "day", 90, "line"),
@@ -237,6 +252,11 @@ export function buildView(vehicle) {
       tile(o.cost_month, "Cost this month"),
       tile(o.cost_week, "Cost this week"),
       tile(o.charging_session, "Charging"),
+      tile(o.charging_efficiency, "Charging efficiency"),
+      tile(o.charging_sessions, "Sessions"),
+      o.charging_power && o.charging_state
+        ? { ...tile(o.charging_power, "Charging power"), visibility: [{ condition: "state", entity: o.charging_state, state: "charging" }] }
+        : null,
       o.last_charge ? { type: "markdown", content: chargingMarkdown(o) } : null,
       o.last_charge ? { type: "logbook", title: "Charging log", entities: [o.last_charge], hours_to_show: 24 * 30 } : null,
       statistics("Energy charged per month (kWh)", [
@@ -257,6 +277,7 @@ export function buildView(vehicle) {
       tile(o.cost_year, "Charging cost this year"),
       tile(o.fuel_savings, "Saved vs fuel"),
       tile(o.solar_savings, "Saved by solar"),
+      tile(o.co2_savings, "CO2 saved vs fuel"),
       costMarkdown(o) ? { type: "markdown", content: costMarkdown(o) } : null,
       costByTemperatureMarkdown(o) ? { type: "markdown", content: costByTemperatureMarkdown(o) } : null,
       statistics("Charging cost per month", [

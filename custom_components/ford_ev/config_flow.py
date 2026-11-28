@@ -14,11 +14,15 @@ from .const import (
     CONF_ALERT_DELAY_MIN,
     CONF_BASE_LOAD_W,
     CONF_BATTERY_KWH,
+    CONF_CALIBRATE_AT_TARGET,
     CONF_DASHBOARD_PATH,
     CONF_DC_LOSS_PCT,
     CONF_DEVICE_ID,
     CONF_FUEL_PRICE_ENTITY,
+    CONF_FUEL_CO2,
     CONF_FUEL_PRICE_FIXED,
+    CONF_GRID_CO2,
+    CONF_HOUSE_LOAD_ENTITY,
     CONF_ICE_CONSUMPTION,
     CONF_NIGHT_END,
     CONF_NIGHT_START,
@@ -68,11 +72,14 @@ _CLEARABLE = (
     CONF_PUBLIC_PRICE_ENTITY,
     CONF_PUBLIC_PRICE_FIXED,
     CONF_SOLAR_POWER_ENTITY,
+    CONF_HOUSE_LOAD_ENTITY,
     CONF_SOLAR_PRICE_ENTITY,
     CONF_SOLAR_PRICE_FIXED,
     CONF_ICE_CONSUMPTION,
     CONF_FUEL_PRICE_ENTITY,
     CONF_FUEL_PRICE_FIXED,
+    CONF_GRID_CO2,
+    CONF_FUEL_CO2,
 )
 
 
@@ -201,6 +208,9 @@ class FordEvOptionsFlow(OptionsFlowWithReload):
                 ),
                 _suggested(CONF_SOLAR_PRICE_ENTITY, current): _PRICE_ENTITY,
                 _suggested(CONF_SOLAR_PRICE_FIXED, current): _PRICE,
+                _suggested(CONF_HOUSE_LOAD_ENTITY, current): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="sensor", device_class="power")
+                ),
                 vol.Required(CONF_BASE_LOAD_W, default=current[CONF_BASE_LOAD_W]): selector.NumberSelector(
                     selector.NumberSelectorConfig(min=0, max=10000, step=10, unit_of_measurement="W", mode=selector.NumberSelectorMode.BOX)
                 ),
@@ -213,6 +223,15 @@ class FordEvOptionsFlow(OptionsFlowWithReload):
                 ),
                 _suggested(CONF_FUEL_PRICE_ENTITY, current): _PRICE_ENTITY,
                 _suggested(CONF_FUEL_PRICE_FIXED, current): _PRICE,
+                _suggested(CONF_FUEL_CO2, current): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=0, max=10, step=0.01, unit_of_measurement="kg/l", mode=selector.NumberSelectorMode.BOX)
+                ),
+                _suggested(CONF_GRID_CO2, current): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=0, max=2000, step=1, unit_of_measurement="g/kWh", mode=selector.NumberSelectorMode.BOX)
+                ),
+                vol.Required(
+                    CONF_CALIBRATE_AT_TARGET, default=current[CONF_CALIBRATE_AT_TARGET]
+                ): selector.BooleanSelector(),
                 vol.Required(CONF_ALERT_DELAY_MIN, default=current[CONF_ALERT_DELAY_MIN]): selector.NumberSelector(
                     selector.NumberSelectorConfig(min=1, max=120, step=1, unit_of_measurement="min", mode=selector.NumberSelectorMode.BOX)
                 ),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import statistics
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -18,6 +19,8 @@ from homeassistant.const import (
     UnitOfEnergy,
     UnitOfEnergyDistance,
     UnitOfLength,
+    UnitOfMass,
+    UnitOfPower,
     UnitOfTemperature,
     UnitOfTime,
 )
@@ -28,14 +31,14 @@ from homeassistant.util import dt as dt_util
 
 from .engine import FordEvConfigEntry, FordEvEngine
 from .entity import FordEvEntity
-from .const import CONF_SOLAR_POWER_ENTITY
+from .const import CONF_FUEL_CO2, CONF_GRID_CO2, CONF_SOLAR_POWER_ENTITY
 from .periods import LIFETIME, period_value
-from .trips import bin_rows, measured_consumption
+from .trips import BIN_WIDTH_C, bin_rows, measured_consumption, speed_rows, trip_statistics
 from .range_model import BY_TEMPERATURE, climate_kw, drive_kwh, model_soc, predicted_kwh_per_km
 from .units import state_km, state_number
 
 # data_age is the only polled sensor.
-SCAN_INTERVAL = timedelta(seconds=60)
+SCAN_INTERVAL = timedelta(minutes=5)
 MIN_CONSUMPTION_KM = 10
 CHARGING_STATES = {"A": "unplugged", "B": "plugged", "C": "charging"}
 
@@ -75,6 +78,20 @@ def _consumption(period: str) -> Callable[[FordEvEngine], float | None]:
         return used / km * 100
 
     return value
+
+
+def _consumption_attrs(period: str) -> Callable[[FordEvEngine], dict[str, Any]]:
+    """The same without the energy used while parked."""
+
+    def attrs(engine: FordEvEngine) -> dict[str, Any]:
+        totals = engine.totals()
+        km = period_value(engine.state.periods, period, "odometer", totals)
+        used = period_value(engine.state.periods, period, "energy_used", totals)
+        parked = period_value(engine.state.periods, period, "parked_energy", totals)
+        driving = max(used - (parked or 0.0), 0.0) if used is not None else None
+        return {"driving": _round(_per_100(driving, km), 1), "parked_kwh": _round(parked, 2)}
+
+    return attrs
 
 
 def _soc_and_range(engine: FordEvEngine) -> tuple[float | None, float | None]:
@@ -184,6 +201,8 @@ def _cycle_attrs(engine: FordEvEngine) -> dict[str, Any]:
     return {
         "cycle_km": round(m.cycle_km, 1),
         "cycle_charged_kwh": round(m.cycle_charged, 2),
+        # Of that, what only refills a battery that was not full when the cycle began.
+        "cycle_refill_kwh": round(m.cycle_deficit or 0.0, 2),
         "cycle_model_kwh": round(m.a * m.cycle_x_drive + m.b * m.cycle_x_hvac, 2),
     }
 
@@ -249,14 +268,22 @@ def _cost_per_100km_attrs(period: str) -> Callable[[FordEvEngine], dict[str, Any
             return _in_period(engine, period, counter)
 
         charged, cost = get("charger_energy"), get("cost")
+        driving_cost, parked_cost = get("driving_cost"), get("parked_cost")
+        driving_only = max(driving_cost - (parked_cost or 0.0), 0.0) if driving_cost is not None else None
         out: dict[str, Any] = {
             "km": _round(get("odometer"), 1),
-            "driving_cost": _round(get("driving_cost"), 2),
+            "driving_cost": _round(driving_cost, 2),
+            # The same per 100 km without the energy used while parked.
+            "driving_only": _round(_per_100(driving_only, get("odometer")), 2),
+            "parked_cost": _round(parked_cost, 2),
             "charging_cost": _round(cost, 2),
             "charging_cost_home": _round(get("cost_home"), 2),
             "charging_cost_public": _round(get("cost_public"), 2),
             "charged_kwh": _round(charged, 1),
             "solar_kwh": _round(get("charger_energy_solar"), 1),
+            "home_share_pct": _share(get("charger_energy_home"), charged),
+            # Solar is counted at the meter, losses included, so it is compared with what was billed.
+            "solar_share_pct": _share(get("charger_energy_solar"), _billed_home(engine, get("charger_energy_home"))),
             "price_per_kwh": round(cost / charged, 3) if cost is not None and charged else None,
         }
         if period == LIFETIME:
@@ -269,6 +296,16 @@ def _cost_per_100km_attrs(period: str) -> Callable[[FordEvEngine], dict[str, Any
         return out
 
     return attrs
+
+
+def _share(part: float | None, whole: float | None) -> float | None:
+    if part is None or not whole or whole <= 0:
+        return None
+    return round(min(part / whole, 1.0) * 100, 1)
+
+
+def _billed_home(engine: FordEvEngine, kwh: float | None) -> float | None:
+    return kwh * (1 + engine.loss_pct(False) / 100) if kwh is not None else None
 
 
 def _battery_price_attrs(engine: FordEvEngine) -> dict[str, Any]:
@@ -313,7 +350,7 @@ def _last_trip(engine: FordEvEngine) -> str | None:
 
 def _last_trip_attrs(engine: FordEvEngine) -> dict[str, Any]:
     last = engine.state.last_trip or {}
-    out = {k: v for k, v in last.items() if k not in ("end_ts", "bin", "summary")}
+    out = {k: v for k, v in last.items() if k not in ("end_ts", "bin", "speed_bin", "summary")}
     for key, digits in (("kwh", 2), ("cost", 2)):
         if out.get(key) is not None:
             out[key] = round(out[key], digits)
@@ -335,11 +372,16 @@ def _parked_attrs(engine: FordEvEngine) -> dict[str, Any]:
     month_kwh = _in_period(engine, "month", "parked_energy")
     start = _month_tracking_start(engine, engine.state.parked_since)
     days = (dt_util.now() - start).total_seconds() / 86400 if start else 0.0
+    per_day = month_kwh / days if month_kwh is not None and days >= 1 else None
     return {
         "cost": round(engine.state.parked_cost, 2),
         "month_kwh": _round(month_kwh, 2),
         "month_cost": _round(_in_period(engine, "month", "parked_cost"), 2),
-        "per_day": round(month_kwh / days, 2) if month_kwh is not None and days >= 1 else None,
+        "per_day": _round(per_day, 2),
+        "percent_per_day": round(per_day / engine.capacity_kwh * 100, 2) if per_day is not None else None,
+        "share_pct": _share(engine.state.parked_energy, engine.state.soc.energy_used),
+        # Of the total: used with the ignition on and the car not moving.
+        "idle_kwh": round(engine.state.idle_energy, 2),
     }
 
 
@@ -351,7 +393,12 @@ def _charge_to_target(engine: FordEvEngine) -> tuple[float, float] | None:
     if soc is None or price is None:
         return None
     kwh = max(engine.state.settings.charge_target - soc, 0.0) / 100 * engine.capacity_kwh
-    return kwh, kwh * (1 + engine.loss_pct(dc=not home) / 100) * price
+    dc = not home
+    if dc and engine.is_plugged():
+        # Away from home the charger is assumed to be DC, unless the car says it is AC.
+        charging = engine.fcq_state("elvehcharging")
+        dc = "AC" not in str((charging.attributes.get("chargingType") if charging else "") or "").upper()
+    return kwh, kwh * (1 + engine.loss_pct(dc) / 100) * price
 
 
 def _charge_to_target_cost(engine: FordEvEngine) -> float | None:
@@ -364,9 +411,115 @@ def _charge_to_target_attrs(engine: FordEvEngine) -> dict[str, Any]:
     return {"kwh": round(result[0], 1) if result else None, "location": "home" if engine.is_home() else "away"}
 
 
+def _capacity_estimate(engine: FordEvEngine) -> float | None:
+    """Median of the last estimates: one estimate moves with the state of charge it started from."""
+    estimates = engine.state.capacity_estimates
+    return statistics.median(estimates) if estimates else None
+
+
 def _capacity_attrs(engine: FordEvEngine) -> dict[str, Any]:
-    estimate = engine.state.capacity_estimate
-    return {"percent_of_configured": round(estimate / engine.capacity_kwh * 100, 1) if estimate else None}
+    estimate = _capacity_estimate(engine)
+    return {
+        "percent_of_configured": round(estimate / engine.capacity_kwh * 100, 1) if estimate else None,
+        "last": _round(engine.state.capacity_estimate, 1),
+        "samples": len(engine.state.capacity_estimates),
+    }
+
+
+def _measured_by_temperature(engine: FordEvEngine) -> dict[str, Any]:
+    """The temperature bands, each with what the model predicts at the middle of the band."""
+    rows = bin_rows(engine.state.temp_bins)
+    for row in rows:
+        per_km = _kwh_per_km(engine, row["t"] + BIN_WIDTH_C / 2)
+        row["model"] = round(per_km * 100, 1) if per_km is not None else None
+    return {"by_temperature": rows}
+
+
+def _trips_7d(engine: FordEvEngine) -> int:
+    return trip_statistics(engine.state.trips, dt_util.utcnow().timestamp()).get("trips_7d", 0)
+
+
+def _trip_attrs(engine: FordEvEngine) -> dict[str, Any]:
+    stats = trip_statistics(engine.state.trips, dt_util.utcnow().timestamp())
+    stats.pop("trips_7d", None)
+    return {**stats, "by_speed": speed_rows(engine.state.speed_bins)}
+
+
+def _charging_power(engine: FordEvEngine) -> float | None:
+    return engine.charging_power_kw if engine.state.session is not None else None
+
+
+def _charging_power_attrs(engine: FordEvEngine) -> dict[str, Any]:
+    power = _charging_power(engine)
+    soc = engine.current_soc()
+    kwh = max(engine.state.settings.charge_target - soc, 0.0) / 100 * engine.capacity_kwh if soc is not None else None
+    return {"to_target_min": round(kwh / power * 60) if power and kwh is not None else None}
+
+
+def _session_attrs(engine: FordEvEngine) -> dict[str, Any]:
+    st = engine.state
+    return {
+        "mean_kwh": round(st.sessions_kwh / st.sessions_count, 1) if st.sessions_count else None,
+        "mean_start_soc": round(st.sessions_start_soc_sum / st.sessions_start_soc_count)
+        if st.sessions_start_soc_count
+        else None,
+        "dc_share_pct": _share(st.sessions_dc_kwh, st.sessions_kwh),
+        # Battery energy added so far, in full batteries.
+        "full_cycles": round(st.soc.energy_added / engine.capacity_kwh, 1),
+    }
+
+
+def _charging_efficiency(engine: FordEvEngine) -> float | None:
+    st = engine.state
+    return st.eff_battery_kwh / st.eff_charger_kwh * 100 if st.eff_charger_kwh > 0 else None
+
+
+def _charging_efficiency_attrs(engine: FordEvEngine) -> dict[str, Any]:
+    st = engine.state
+    return {
+        "sessions": st.eff_sessions,
+        "last": _round(st.eff_last_pct, 1),
+        "charger_kwh": round(st.eff_charger_kwh, 1),
+        "battery_kwh": round(st.eff_battery_kwh, 1),
+    }
+
+
+def _daily_km(engine: FordEvEngine) -> float | None:
+    """Mean km per day over the tracked part of this month and the previous one.
+
+    None under 3 tracked days, and when the day tracking started is not known.
+    """
+    periods = engine.state.periods
+    month, lifetime = periods.snapshots.get("month"), periods.snapshots.get(LIFETIME)
+    km = _in_period(engine, "month", "odometer")
+    if month is None or lifetime is None or km is None:
+        return None
+    month_start, tracked_from = date.fromisoformat(month.start), date.fromisoformat(lifetime.start)
+    previous = periods.previous.get("month")
+    if previous is None and tracked_from == month_start:
+        return None
+    start = max(month_start, tracked_from)
+    if previous is not None and "odometer" in previous and tracked_from < month_start:
+        previous_start = (month_start - timedelta(days=1)).replace(day=1)
+        start = max(previous_start, tracked_from)
+        km += previous["odometer"]
+    days = (dt_util.now() - dt_util.start_of_local_day(start)).total_seconds() / 86400
+    return km / days if days >= 3 else None
+
+
+def _days_of_range(engine: FordEvEngine) -> float | None:
+    daily, km = _daily_km(engine), _model_range(engine)
+    if daily is None or daily <= 0 or km is None:
+        return None
+    return km / daily
+
+
+def _days_of_range_attrs(engine: FordEvEngine) -> dict[str, Any]:
+    daily, car = _daily_km(engine), state_km(engine.fcq_state("elveh"))
+    return {
+        "daily_km": _round(daily, 1),
+        "days_car": round(car / daily, 1) if daily and daily > 0 and car is not None else None,
+    }
 
 
 def _month_projection_factor(engine: FordEvEngine) -> float | None:
@@ -399,7 +552,16 @@ def _month_projection(engine: FordEvEngine) -> float | None:
 
 def _month_projection_attrs(engine: FordEvEngine) -> dict[str, Any]:
     factor, km = _month_projection_factor(engine), _in_period(engine, "month", "odometer")
-    return {"km": round(km * factor) if factor is not None and km is not None else None}
+    # A year at the km per day driven lately and the cost per km since the start.
+    daily = _daily_km(engine)
+    total_km, total_cost = _in_period(engine, LIFETIME, "odometer"), _in_period(engine, LIFETIME, "driving_cost")
+    year_km = daily * 365 if daily is not None else None
+    per_km = total_cost / total_km if total_cost is not None and total_km and total_km >= MIN_CONSUMPTION_KM else None
+    return {
+        "km": round(km * factor) if factor is not None and km is not None else None,
+        "year_km": round(year_km) if year_km is not None else None,
+        "year_cost": round(year_km * per_km) if year_km is not None and per_km is not None else None,
+    }
 
 
 def _fuel_savings_in(engine: FordEvEngine, period: str) -> float | None:
@@ -416,6 +578,19 @@ def _fuel_savings_attrs(engine: FordEvEngine) -> dict[str, Any]:
     out: dict[str, Any] = {p: _round(_fuel_savings_in(engine, p), 2) for p in ("week", "month", "year")}
     out["fuel_cost_per_100km"] = round(consumption * price, 2) if consumption is not None and price is not None else None
     return out
+
+
+def _co2_savings_in(engine: FordEvEngine, period: str) -> float | None:
+    """kg of CO2 the same distance would have emitted from fuel, minus those of the electricity used.
+
+    The electricity is the energy used plus the AC charging losses, at the grid figure set in
+    the options; the fuel is the comparison car's consumption at the figure per litre set there.
+    """
+    consumption, fuel, grid = engine.ice_consumption(), engine.config.get(CONF_FUEL_CO2), engine.config.get(CONF_GRID_CO2)
+    km, used = _in_period(engine, period, "odometer"), _in_period(engine, period, "energy_used")
+    if consumption is None or fuel is None or grid is None or km is None or used is None:
+        return None
+    return km * consumption / 100 * float(fuel) - used * (1 + engine.loss_pct(False) / 100) * float(grid) / 1000
 
 
 def _solar_savings_in(engine: FordEvEngine, period: str | None) -> float | None:
@@ -495,13 +670,22 @@ SENSORS: tuple[FordEvSensorDescription, ...] = (
     _period_sensor("charger_energy_home_month", "month", "charger_energy_home", _ENERGY),
     _period_sensor("cost_week", "week", "cost", _MONEY),
     _period_sensor("cost_month", "month", "cost", _MONEY),
-    FordEvSensorDescription(key="consumption_week", value_fn=_consumption("week"), **_CONSUMPTION),
-    FordEvSensorDescription(key="consumption_month", value_fn=_consumption("month"), **_CONSUMPTION),
+    *(
+        FordEvSensorDescription(
+            key=f"consumption_{period}",
+            value_fn=_consumption(period),
+            attrs_fn=_consumption_attrs(period),
+            **_CONSUMPTION,
+        )
+        for period in ("week", "month")
+    ),
     _period_sensor("distance_year", "year", "distance", _KM),
     _period_sensor("energy_used_year", "year", "energy_used", _ENERGY),
     _period_sensor("charger_energy_year", "year", "charger_energy", _ENERGY),
     _period_sensor("cost_year", "year", "cost", _MONEY),
-    FordEvSensorDescription(key="consumption_year", value_fn=_consumption("year"), **_CONSUMPTION),
+    FordEvSensorDescription(
+        key="consumption_year", value_fn=_consumption("year"), attrs_fn=_consumption_attrs("year"), **_CONSUMPTION
+    ),
     FordEvSensorDescription(
         key="driving_cost",
         value_fn=lambda e: e.state.driving_cost if e.state.battery_value is not None else None,
@@ -549,6 +733,19 @@ SENSORS: tuple[FordEvSensorDescription, ...] = (
         **_AMOUNT,
     ),
     FordEvSensorDescription(
+        key="co2_savings",
+        value_fn=lambda e: _co2_savings_in(e, LIFETIME),
+        attrs_fn=lambda e: {p: _round(_co2_savings_in(e, p), 1) for p in ("week", "month", "year")},
+        exists_fn=lambda e: (
+            e.ice_consumption() is not None
+            and e.config.get(CONF_FUEL_CO2) is not None
+            and e.config.get(CONF_GRID_CO2) is not None
+        ),
+        native_unit_of_measurement=UnitOfMass.KILOGRAMS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    FordEvSensorDescription(
         key="solar_savings",
         value_fn=lambda e: _solar_savings_in(e, None),
         attrs_fn=lambda e: {p: _round(_solar_savings_in(e, p), 2) for p in ("week", "month", "year")},
@@ -558,7 +755,7 @@ SENSORS: tuple[FordEvSensorDescription, ...] = (
     FordEvSensorDescription(
         key="consumption_by_temperature",
         value_fn=lambda e: measured_consumption(e.state.temp_bins),
-        attrs_fn=lambda e: {"by_temperature": bin_rows(e.state.temp_bins)},
+        attrs_fn=_measured_by_temperature,
         **_CONSUMPTION,
     ),
     FordEvSensorDescription(key="last_trip", value_fn=_last_trip, attrs_fn=_last_trip_attrs),
@@ -571,10 +768,47 @@ SENSORS: tuple[FordEvSensorDescription, ...] = (
     ),
     FordEvSensorDescription(
         key="capacity_estimate",
-        value_fn=lambda e: e.state.capacity_estimate,
+        value_fn=_capacity_estimate,
         attrs_fn=_capacity_attrs,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY_STORAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    FordEvSensorDescription(
+        key="charging_efficiency",
+        value_fn=_charging_efficiency,
+        attrs_fn=_charging_efficiency_attrs,
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    FordEvSensorDescription(
+        key="trips",
+        value_fn=_trips_7d,
+        attrs_fn=_trip_attrs,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    FordEvSensorDescription(
+        key="charging_power",
+        value_fn=_charging_power,
+        attrs_fn=_charging_power_attrs,
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    FordEvSensorDescription(
+        key="charging_sessions",
+        value_fn=lambda e: e.state.sessions_count,
+        attrs_fn=_session_attrs,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+    ),
+    FordEvSensorDescription(
+        key="days_of_range",
+        value_fn=_days_of_range,
+        attrs_fn=_days_of_range_attrs,
+        native_unit_of_measurement=UnitOfTime.DAYS,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
     ),

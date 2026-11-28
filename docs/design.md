@@ -35,7 +35,7 @@ The range estimate is the distinctive part. On LFP batteries the car's displayed
 - Notification texts in languages other than English. The UI strings live in translation files, so other languages can be added later.
 - Seeding the range model from recorder history.
 - Listing in the default HACS store. That submission can follow once the integration is stable.
-- Solar share of charging, charger control, or any other integration besides FCQ, notify, weather and a temperature sensor.
+- Charger control, or any other integration besides FCQ, notify, weather, a temperature sensor and the price and solar power entities the user chooses. (The solar share of charging was added in 0.2.0.)
 
 ### Anti-goals: things that count as failures even if the code works
 
@@ -295,7 +295,7 @@ These were not decided explicitly and can be overridden:
 
 - **Names:** domain `ford_ev`, display name "Ford EV", minimum Home Assistant 2026.5.
 - **Day-to-day vs set-once settings:** day-to-day settings (climate, setpoint, charge target, reminder threshold, alert on/off) are entities; set-once settings are in the options flow.
-- **Charging cost:** at-home charger-reported energy, priced per increment. Charging away from home has no cost.
+- **Charging cost:** charger-reported energy, priced per increment. (Since 0.2.0 charging away from home is priced at the public price.)
 - **Defaults:** all notifications on except the calibration notification; English notification texts only.
 - **Range model additions:** the seeded drive factor, the capacity estimate, and the reset service.
 - **Dashboard:** plain JavaScript strategy, no build step.

@@ -28,11 +28,15 @@ CONF_SOLAR_POWER_ENTITY = "solar_power_entity"
 CONF_SOLAR_PRICE_ENTITY = "solar_price_entity"
 CONF_SOLAR_PRICE_FIXED = "solar_price_fixed"
 CONF_BASE_LOAD_W = "base_load_w"
+CONF_HOUSE_LOAD_ENTITY = "house_load_entity"
 CONF_AC_LOSS_PCT = "ac_loss_pct"
 CONF_DC_LOSS_PCT = "dc_loss_pct"
 CONF_ICE_CONSUMPTION = "ice_consumption"
 CONF_FUEL_PRICE_ENTITY = "fuel_price_entity"
 CONF_FUEL_PRICE_FIXED = "fuel_price_fixed"
+CONF_GRID_CO2 = "grid_co2_g_kwh"
+CONF_FUEL_CO2 = "fuel_co2_kg_l"
+CONF_CALIBRATE_AT_TARGET = "calibrate_at_target"
 CONF_ALERT_DELAY_MIN = "alert_delay_min"
 CONF_REMINDER_TIME = "reminder_time"
 CONF_NIGHT_START = "night_start"
@@ -56,11 +60,15 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     CONF_SOLAR_PRICE_ENTITY: None,
     CONF_SOLAR_PRICE_FIXED: None,
     CONF_BASE_LOAD_W: 300,
+    CONF_HOUSE_LOAD_ENTITY: None,
     CONF_AC_LOSS_PCT: 10,
     CONF_DC_LOSS_PCT: 5,
     CONF_ICE_CONSUMPTION: None,
     CONF_FUEL_PRICE_ENTITY: None,
     CONF_FUEL_PRICE_FIXED: None,
+    CONF_GRID_CO2: None,
+    CONF_FUEL_CO2: None,
+    CONF_CALIBRATE_AT_TARGET: False,
     CONF_ALERT_DELAY_MIN: 10,
     CONF_REMINDER_TIME: "21:00:00",
     CONF_NIGHT_START: "00:00:00",

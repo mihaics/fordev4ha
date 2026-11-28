@@ -75,20 +75,23 @@ Open **Settings > Devices & services > Ford EV > Configure**. The integration re
 | Notification services | none | `notify` services to send notifications to, for example `mobile_app_<your phone>`. Nothing is sent while this and the next option are empty. |
 | Notification entities | none | `notify.*` entities (for example a display) to send notifications to. |
 | Dashboard path | empty | Opened when a phone notification is tapped, for example `/dashboard-ford-ev`. |
-| Electricity price entity | none | A sensor or input number holding the price per kWh in your currency. Takes precedence over the fixed price. |
+| Electricity price entity | none | A sensor or input number holding the price per kWh in your currency. Takes precedence over the fixed price. While it has no value, its last known value is used. |
 | Fixed electricity price | none | Price per kWh, used when no price entity is set. |
 | Public charging price entity / fixed public charging price | none | Price per kWh away from home, as entity or fixed value. Without one, charging away from home costs nothing. |
 | Solar power sensor | none | Current solar production (W or kW). When set, solar power above the house base load covers home charging first. A forecast sensor, such as Forecast.Solar's power now, works as an estimate. |
 | Solar kWh price entity / fixed solar kWh price | none (0) | What a solar kWh used for charging is worth to you, for example what exporting it would have earned. |
 | House base load | 300 W | Solar power the house uses before the car gets any. |
+| House power sensor | none | Power the house uses without the car (W or kW). When set, it replaces the fixed base load: the car gets the solar power above it. |
 | AC charging losses | 10 % | Energy the meter bills above what the car reports on AC: the car reports energy after its onboard charger, while the wall meter also sees the onboard charger's, wallbox's and cable's losses. |
 | DC charging losses | 5 % | The same on DC. |
 | Fuel car consumption | none | Litres per 100 km of a combustion car to compare with. When set, the **Saved vs fuel** sensor is created. |
 | Fuel price entity / fixed fuel price | none | Price per litre, as entity or fixed value. |
+| CO2 per litre of fuel / CO2 per kWh of electricity | none | Your own figures, in kg per litre and g per kWh. With both and the fuel car consumption set, the **CO2 saved vs fuel** sensor is created. |
+| Calibrate at the charge target | off | Also calibrate the range model when a charge reaches a charge target below 100 %. The car's state of charge then says how far from full the battery is, so use it only where that figure is reliable below 100 %; leave it off for LFP batteries. |
 | Unlocked / open alert delay | 10 min | How long the car must stay unlocked, or a door or window open, before you are notified. |
 | Plug-in reminder time | 21:00 | When to check whether the car needs plugging in. |
 | Night window start / end | 00:00 / 06:00 | When ignition or leaving home counts as night activity. The window may span midnight, for example 22:00 to 06:00. |
-| Weekly summary day / time | Sunday 20:00 | When the weekly summary is sent. |
+| Weekly summary day / time | Sunday 20:00 | When the weekly summary is sent. It covers the time since the previous summary. |
 | Alert when unavailable for | 2 h | FordConnect Query unavailable this long counts as "car data stopped". |
 | Alert when the car has not reported for | 48 h | No update from the car this long counts as "car data stopped". |
 | Usable battery capacity, temperature sensor, weather entity | from setup | As in [Setup](#setup). |
@@ -108,8 +111,8 @@ Settings you may change day to day are entities on the device, so they also appe
 Each kWh the car reports is priced at the moment it is counted, so time-of-use and dynamic tariffs are handled correctly.
 
 1. **Losses.** The billed energy is the reported energy plus the AC or DC losses, chosen by the charging type the car reports.
-2. **Location.** At home (the car's tracker is in the `home` zone) the electricity price applies; anywhere else, the public charging price.
-3. **Solar, at home only.** With a solar power sensor, the solar power above the house base load since the previous reading covers the billed energy first and is priced at the solar kWh price; the rest is priced at the electricity price.
+2. **Location.** A charging session is billed in one place, where the car was when the session's first energy was counted: at home (the car's tracker is in the `home` zone) the electricity price applies; anywhere else, the public charging price.
+3. **Solar, at home only.** With a solar power sensor, the solar energy above the house base load since the previous reading, added up as the sensor changes, covers the billed energy first and is priced at the solar kWh price; the rest is priced at the electricity price.
 
 The result is an estimate: the car reports energy in 0.5 kWh steps, and a forecast sensor is not a meter. Use **Add a past charge** to correct it with an invoice amount.
 
@@ -147,9 +150,9 @@ There is one view per vehicle, with these sections:
 
 - **Now:** battery, range, charging state, charging end time (while charging), locks, doors, windows, ignition, warning lights, odometer, last update.
 - **Location:** map.
-- **Driving:** km per day, week, month and year; consumption; the last trip; energy used while parked; trends.
+- **Driving:** km per day, week, month and year; consumption; the last trip; trip statistics with consumption by average speed; energy used while parked; days of range; trends.
 - **Range estimate:** car vs model for range and state of charge; range at 100 % now and tomorrow; a table by temperature; calibration status.
-- **Charging:** energy and cost, the last session and the charging log.
+- **Charging:** energy and cost, charging power (while charging), charging efficiency, the number of sessions, the last session and the charging log.
 - **Costs:** cost per 100 km for the week, month, year and since the start; a table of the km tracked, charging cost, driving cost and cost per 100 km per period (a period that began before installation shows the day tracking started; the split between home and public charging is in the cost per 100 km sensors' attributes and the monthly charging cost chart); the model's cost per 100 km by temperature and price next to the consumption measured on trips; cost to charge to the target; savings; charging cost, driving cost and distance per month.
 - **Settings:** the settings and notification switches listed above.
 
@@ -199,7 +202,7 @@ The dashboard is regenerated every time it is opened, so new entities appear on 
 | Warning light | The number of active warning lights went up. | on |
 | No data from car | FordConnect Query unavailable, or no update from the car, for the configured time. | on |
 | Night activity | Ignition turned on, or the car left home, inside the night window. Sent with high priority. | on |
-| Weekly summary | Weekly: km, energy used, consumption, energy charged (at home), charging cost, driving cost and cost per 100 km, battery level. | on |
+| Weekly summary | Weekly: km, energy used, consumption, energy charged (at home), charging cost, driving cost and cost per 100 km, battery level, and the km and consumption of the summary before. | on |
 | Range calibrated | After each calibration: error and new factors. | off |
 
 **How each alert fires:**
@@ -249,9 +252,9 @@ The car estimates its own range from its own state of charge. On LFP batteries t
    - resets the model battery to full.
 
    You see the error of each cycle and the learned factors on the dashboard.
-4. **Capacity estimate.** If the final charge of a cycle started below 80 %, the energy of that charge divided by the state-of-charge rise gives an estimate of the usable capacity. It is shown on the dashboard so you can compare it with the value you entered. It is never applied automatically.
+4. **Capacity estimate.** If the final charge of a cycle started below 80 %, the energy of that charge divided by the state-of-charge rise says how much the charger delivers for a full battery: the usable capacity plus the losses between the charger's counter and the battery, usually a few percent. The sensor shows the median of the last five. Compare it with the capacity you entered; it is never applied automatically.
 
-To get good estimates, charge to 100 % now and then. Every full charge is one calibration. Until the first one, the dashboard shows "Not calibrated yet", and the model starts from the car's own state of charge and range.
+To get good estimates, charge to 100 % now and then. Every full charge is one calibration. Until the first one, the dashboard shows "Not calibrated yet", and the model starts from the car's own state of charge and range. The first calibration after setup, or after a reset, covers a cycle that did not begin with a full battery: the energy that only filled the battery from where it was then is left out, using the car's state of charge at that moment. With **Calibrate at the charge target** on, a charge that reaches a target below 100 % also calibrates: the energy used in the cycle is then what was charged, corrected by how far from full the battery was at the start and at the end of the cycle, both from the car's state of charge.
 
 **Reset.** The action **Ford EV: Reset range model** (`ford_ev.reset_range_model`) sets the learned factors back to their starting values and the model battery to the car's state of charge. Use it after correcting the battery capacity. With more than one vehicle, choose which one.
 
@@ -273,16 +276,21 @@ Entity IDs follow the pattern `<platform>.ev_<entity name>`, for example `sensor
 | Distance today / this week / this month / this year | km driven in the period. A period that began before installation counts from installation unless corrected, see [Distance before installation](#distance-before-installation). |
 | Energy used, energy charged, energy charged at home, charging cost: this week / this month | The same figures per period. Attribute: the previous period. |
 | Energy used, energy charged, charging cost: this year | The same for the year. It starts when the integration first sees the year. |
-| Consumption this week / this month / this year | Energy used per 100 km. Empty below 10 km. |
+| Consumption this week / this month / this year | Energy used per 100 km. Empty below 10 km. Attributes: the same without the energy used while parked (`driving`), and that energy. |
+| Days of range | Model range divided by the km driven per day, averaged over this month and the previous one. Empty until 3 days are tracked. Attributes: km per day, and the same from the car's own range. |
+| Trips in the last 7 days | Number of trips. Attributes, over the last 50 trips: mean, median and longest distance, the share of km driven in trips under 10 km, best and worst consumption (trips of 10 km or more), the model's error on trips of 20 km or more, and consumption by average-speed band (from 0, 30, 60, 90 km/h; a band is shown from 20 km on). |
+| Charging power | Power of the running charge, from the last step of the car's charger counter, so it lags by one step. Empty when not charging. Attribute: minutes to the charge target at that power. |
+| Charging sessions | Number of finished sessions. Attributes: mean energy, mean state of charge at the start, share of the energy charged on DC, and the battery energy added so far in full batteries. |
+| Charging efficiency | Share of the energy the charger reports that reached the battery, over all sessions that raised the state of charge by at least 20 points. Attributes: sessions, the last session's value, and the two energy totals. |
 | Last trip | Summary of the last trip. Attributes: start, end, duration, km, average speed, temperature, kWh, kWh/100 km, cost. Consumption from 5 km on. |
-| Measured consumption | kWh/100 km over all recorded trips. Attribute: a table by outside temperature band. |
-| Energy used while parked | Battery energy used with the ignition off, more than 30 minutes after a trip. Attributes: its cost, this month's figures and kWh per day. |
+| Measured consumption | kWh/100 km over all recorded trips. Attribute: a table by outside temperature band, with the model's figure for the same band. |
+| Energy used while parked | Battery energy used with the ignition off, more than 30 minutes after a trip, or with the ignition on and the car not moving. Attributes: its cost, this month's figures, kWh and percent of the battery per day, its share of all energy used, and the part used with the ignition on. |
 | Car range at 100 % | The car's range scaled to a full battery: a trend of the car's own efficiency figure. |
 | Car km per % | The car's range per percent of charge. |
 | Charging state | Unplugged / plugged in, not charging / charging. |
 | Charging ends | When the car expects the running charge to finish. Empty when not charging. |
-| Data age | Minutes since the car last reported. |
-| Last charge | Summary of the last charging session. Its history is the charging log. |
+| Data age | Minutes since the car last reported, updated every 5 minutes. |
+| Last charge | Summary of the last charging session. Its history is the charging log. Attributes include the energy that reached the battery and the session's efficiency, for sessions of at least 20 points. |
 | Charging (binary sensor) | On while a charging session is open. |
 
 **Costs**
@@ -291,13 +299,14 @@ Entity IDs follow the pattern `<platform>.ev_<entity name>`, for example `sensor
 |---|---|
 | Driving cost | Cost of the energy used, at the average price of the energy in the battery. Cumulative. |
 | Battery energy price | Average price per kWh of the energy now in the battery. Attribute: its total value. |
-| Cost per 100 km: this week / this month / this year / since the start | Driving cost per 100 km. Empty below 10 km. Attributes: km, driving cost, charging cost (total, home, public), energy charged, solar energy, average price paid per kWh, the previous period, and since (the day tracking started, when the period began before it). |
+| Cost per 100 km: this week / this month / this year / since the start | Driving cost per 100 km. Empty below 10 km. Attributes: km, driving cost, charging cost (total, home, public), energy charged, solar energy, average price paid per kWh, the shares charged at home and from solar, the cost per 100 km without the energy used while parked (`driving_only`), the previous period, and since (the day tracking started, when the period began before it). |
 | Model cost per 100 km | Model consumption now at the battery energy price. Attributes: the prices per kWh and a table by outside temperature and price. |
 | Model cost per 100 km tomorrow | The same at tomorrow's forecast temperature. |
-| Projected driving cost this month | The month so far extended to the end of the month. Empty until 3 days of the month are tracked. Attribute: projected km. |
+| Projected driving cost this month | The month so far extended to the end of the month. Empty until 3 days of the month are tracked. Attributes: projected km; km and cost of a year at the km per day driven lately. |
 | Cost to charge to target | Cost of charging from the current level to the charge target, at the home price at home and the public price elsewhere. Attribute: kWh. |
 | Saved vs fuel | What the distance driven would have cost in fuel, minus the driving cost. Only with a fuel car consumption set. Attributes: week, month, year. |
 | Saved by solar | Solar energy charged times the difference between the home price and the solar kWh price. Only with a solar power sensor. Attributes: week, month, year. |
+| CO2 saved vs fuel | kg of CO2 the distance driven would have emitted from fuel, minus those of the electricity used (energy used plus AC losses). Only with the fuel car consumption and both CO2 figures set. Attributes: week, month, year. |
 
 **Range model**
 
@@ -311,9 +320,9 @@ Entity IDs follow the pattern `<platform>.ev_<entity name>`, for example `sensor
 | Model range at 100 % tomorrow | The same at tomorrow's forecast temperature. |
 | Drive factor / Climate factor | The learned factors (1.0 = baseline). |
 | Last cycle error | Model prediction vs reality for the last cycle, in %. |
-| Calibrations | Number of calibrations used for fitting. Attributes: the current cycle so far. |
+| Calibrations | Number of calibrations used for fitting. Attributes: the current cycle so far, including how much of the energy charged only fills the battery from where it was at setup. |
 | Last calibration | Time of the last calibration. Attributes: its details, including the capacity estimate. |
-| Capacity estimate | The last usable capacity estimated at a calibration, for a trend over time. Attribute: percent of the configured capacity. |
+| Capacity estimate | Charger energy for a full battery, estimated at calibrations: the median of the last five. Attributes: percent of the configured capacity, the last estimate and the number of estimates. |
 
 ## Privacy
 

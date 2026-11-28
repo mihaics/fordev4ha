@@ -322,20 +322,38 @@ class AlertManager:
         engine = self.engine
         totals = engine.totals()
         periods = engine.state.periods
+        # Since the last summary, so it covers seven days whatever weekday it is sent on. The
+        # first one has no earlier summary and covers the calendar week so far.
+        since = engine.state.summary_totals
+
+        def amount(counter: str) -> float | None:
+            if since is None:
+                return period_value(periods, "week", counter, totals)
+            if counter not in since or counter not in totals:
+                return None
+            return totals[counter] - since[counter]
 
         def week(counter: str) -> float:
-            return period_value(periods, "week", counter, totals) or 0.0
+            return amount(counter) or 0.0
 
         km = week("odometer")
         used = week("energy_used")
-        driving_cost = period_value(periods, "week", "driving_cost", totals)
+        driving_cost = amount("driving_cost")
+        consumption = used / km * 100 if km >= 10 else None
+        engine.state.summary_totals = {**totals, "ts": dt_util.utcnow().timestamp(), "last_km": km}
+        if consumption is not None:
+            engine.state.summary_totals["last_consumption"] = consumption
+        engine.save()
         engine.emit(
             "report",
             "weekly_summary",
             {
                 "km": km,
                 "energy_used": used,
-                "consumption": used / km * 100 if km >= 10 else None,
+                "consumption": consumption,
+                # The summary before this one, to compare with.
+                "previous_km": since.get("last_km") if since else None,
+                "previous_consumption": since.get("last_consumption") if since else None,
                 "charger_energy": week("charger_energy"),
                 "charger_energy_home": week("charger_energy_home"),
                 "cost": week("cost"),
@@ -442,6 +460,11 @@ def build_notification(event_type: str, data: dict[str, Any], currency: str) -> 
             message += f" Driving cost {_num(data['driving_cost'], '.2f')} {currency}"
             if data.get("cost_per_100km") is not None:
                 message += f" ({_num(data['cost_per_100km'], '.2f')}/100 km)"
+            message += "."
+        if data.get("previous_km") is not None:
+            message += f" Before: {_num(data['previous_km'])} km"
+            if data.get("previous_consumption") is not None:
+                message += f", {_num(data['previous_consumption'], '.1f')} kWh/100 km"
             message += "."
         message += f" Battery {_num(data.get('soc'))}%."
         return "Weekly summary", message

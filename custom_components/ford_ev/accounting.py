@@ -22,7 +22,6 @@ class SocAccountingState:
     regen_credit: float = 0.0
     energy_used: float = 0.0
     energy_added: float = 0.0
-    energy_added_home: float = 0.0
 
 
 def apply_soc_change(
@@ -46,7 +45,6 @@ def apply_soc_change(
             st,
             last_soc=new_soc,
             energy_added=st.energy_added + added,
-            energy_added_home=st.energy_added_home + (added if home else 0.0),
             regen_credit=0.0,
         )
     if delta > 0:

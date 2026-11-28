@@ -145,7 +145,6 @@ async def test_fired_alert_persisted(hass, fcq, freezer, hass_storage):
 async def test_calibration_without_charger_counter_during_open_session(hass, fcq, freezer):
     """Vehicle without chargerEnergyOutput; car stays in C for a while at 100 %."""
     entry = await async_setup_ford_ev(hass, fcq)
-    engine = entry.runtime_data.engine
     got = capture(hass, entry.entry_id)
     await fcq.set("evccstatus", "C")
     await fcq.set("soc", "100")

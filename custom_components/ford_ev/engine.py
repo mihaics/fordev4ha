@@ -13,13 +13,12 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_UNIT_OF_MEASUREMENT, STATE_UNAVAILABLE, STATE_UNKNOWN, UnitOfPower
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, HomeAssistant, State, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event, async_track_time_change
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
-from homeassistant.util.unit_conversion import PowerConverter
 
 from .accounting import (
     SocAccountingState,
@@ -30,20 +29,14 @@ from .accounting import (
     seed_price,
 )
 from .const import (
-    CONF_AC_LOSS_PCT,
-    CONF_BASE_LOAD_W,
     CONF_BATTERY_KWH,
-    CONF_DC_LOSS_PCT,
+    CONF_CALIBRATE_AT_TARGET,
     CONF_FUEL_PRICE_ENTITY,
-    CONF_FUEL_PRICE_FIXED,
-    CONF_ICE_CONSUMPTION,
+    CONF_HOUSE_LOAD_ENTITY,
     CONF_PRICE_ENTITY,
-    CONF_PRICE_FIXED,
     CONF_PUBLIC_PRICE_ENTITY,
-    CONF_PUBLIC_PRICE_FIXED,
     CONF_SOLAR_POWER_ENTITY,
     CONF_SOLAR_PRICE_ENTITY,
-    CONF_SOLAR_PRICE_FIXED,
     CONF_TEMPERATURE_SENSOR,
     CONF_WEATHER_ENTITY,
     DOMAIN,
@@ -51,22 +44,26 @@ from .const import (
 )
 from .discovery import FcqVehicle
 from .periods import PERIODS, period_start, roll_periods, seed_long_periods, set_distance_start
+from .pricing import PricingMixin
 from .range_model import (
     FALLBACK_TEMP_C,
     MIN_TRIP_KM,
     MAX_TRIP_HOURS,
     SOC_FULL,
+    CAPACITY_ESTIMATES_KEPT,
     RangeModelState,
     TripInput,
     account_trip,
     add_charge,
     calibrate,
     calibration_allowed,
+    capacity_estimate,
+    first_cycle_deficit,
     model_soc,
     seed_drive_factor,
 )
 from .state import STORAGE_VERSION, ChargingSession, EngineState
-from .trips import add_to_bin, bin_key
+from .trips import TRIP_LOG_SIZE, add_to_bin, bin_key, speed_key
 from .units import state_celsius, state_km, state_number, to_celsius, weather_celsius
 
 _LOGGER = logging.getLogger(__name__)
@@ -83,8 +80,13 @@ RECONCILE_TOLERANCE_POINTS = 1.5
 CALIBRATION_DELAY_S = 300
 LAST_SESSION_MAX_AGE = timedelta(hours=1)
 SAVE_DELAY_S = 10
-# Longest stretch of solar production credited to one charger reading.
-SOLAR_WINDOW_MAX_S = 7200
+# A session's charger and battery energy are compared from this rise in state of charge on:
+# the state of charge is in whole percent at both ends.
+MIN_EFFICIENCY_POINTS = 20.0
+# Shortest step of the charger counter that gives a charging power.
+MIN_POWER_STEP_S = 120
+# Outside these the state of charge jumped (it drifts and is corrected); the session is left out.
+EFFICIENCY_BOUNDS_PCT = (75.0, 105.0)
 # "Unsupported" is a transient FCQ value; it must not overwrite the last real value.
 _INVALID = (STATE_UNKNOWN, STATE_UNAVAILABLE, "Unsupported")
 
@@ -103,7 +105,7 @@ def _valid(state: State | None) -> bool:
     return state is not None and state.state not in _INVALID
 
 
-class FordEvEngine:
+class FordEvEngine(PricingMixin):
     """Engine for one configured vehicle."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, vehicle: FcqVehicle) -> None:
@@ -123,6 +125,13 @@ class FordEvEngine:
         self.forecast_tomorrow_c: float | None = None
         self._loaded = False
         self._fcq_listeners: list[Callable[[str, str | None, State], None]] = []
+        # Solar surplus added up since the charger counter last changed; not persisted.
+        self._solar_start_ts: float | None = None
+        self._solar_last_ts = 0.0
+        self._solar_kw = 0.0
+        self._solar_kwh = 0.0
+        # Power of the running charge, from the last step of the charger counter; not persisted.
+        self.charging_power_kw: float | None = None
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -154,9 +163,15 @@ class FordEvEngine:
             if _valid(st):
                 self._last_valid[key] = st.state  # type: ignore[union-attr]
         self._init_baselines()
+        self._record_prices()
         self._ensure_cost_seed()
         if self.first_start:
             self._seed_model()
+        elif self.state.model.cycle_deficit is None and self.state.model.model_energy is not None:
+            # State from before 0.5.0: the cycle may have begun at setup, with a battery not full.
+            self.state.model = replace(
+                self.state.model, cycle_deficit=first_cycle_deficit(self.state.model, self.capacity_kwh)
+            )
         self._recover_session()
         self._recover_trip()
 
@@ -180,6 +195,11 @@ class FordEvEngine:
         ]
         if price_entities:
             self._unsubs.append(async_track_state_change_event(self.hass, price_entities, self._on_price_change))
+        solar_entities = [
+            e for e in (self.config.get(CONF_SOLAR_POWER_ENTITY), self.config.get(CONF_HOUSE_LOAD_ENTITY)) if e
+        ]
+        if self.config.get(CONF_SOLAR_POWER_ENTITY):
+            self._unsubs.append(async_track_state_change_event(self.hass, solar_entities, self._on_solar_change))
         self._unsubs.append(async_track_time_change(self.hass, self._on_midnight, hour=0, minute=0, second=5))
         self._unsubs.append(async_track_time_change(self.hass, self._on_forecast_time, minute=7, second=0))
         soc = state_number(self.fcq_state("soc"))
@@ -234,75 +254,6 @@ class FordEvEngine:
         soc = state_number(self.fcq_state("soc"))
         return soc if soc is not None else self.state.soc.last_soc
 
-    def _configured_price(self, entity_key: str, fixed_key: str) -> float | None:
-        entity_id = self.config.get(entity_key)
-        if entity_id:
-            value = state_number(self.hass.states.get(entity_id))
-            if value is not None:
-                return value
-        fixed = self.config.get(fixed_key)
-        return float(fixed) if fixed is not None else None
-
-    def price(self) -> float | None:
-        """Electricity price per kWh at home: the price entity, else the fixed price, else None."""
-        return self._configured_price(CONF_PRICE_ENTITY, CONF_PRICE_FIXED)
-
-    def public_price(self) -> float | None:
-        """Price per kWh away from home: the public price entity, else the fixed one, else None."""
-        return self._configured_price(CONF_PUBLIC_PRICE_ENTITY, CONF_PUBLIC_PRICE_FIXED)
-
-    def solar_price(self) -> float:
-        """Value of a solar kWh used for charging; 0 when not set."""
-        return self._configured_price(CONF_SOLAR_PRICE_ENTITY, CONF_SOLAR_PRICE_FIXED) or 0.0
-
-    def fuel_price(self) -> float | None:
-        """Price of a litre of fuel, for the comparison with a combustion car."""
-        return self._configured_price(CONF_FUEL_PRICE_ENTITY, CONF_FUEL_PRICE_FIXED)
-
-    def ice_consumption(self) -> float | None:
-        """Consumption of the combustion car to compare with, in l/100 km."""
-        value = self.config.get(CONF_ICE_CONSUMPTION)
-        return float(value) if value else None
-
-    def _has_price(self, entity_key: str, fixed_key: str) -> bool:
-        return bool(self.config.get(entity_key)) or self.config.get(fixed_key) is not None
-
-    def scenario_prices(self) -> dict[str, float | None] | None:
-        """What a kWh reported by the car costs at each configured source, losses included.
-
-        A source that is not configured is left out. None while a configured price is not
-        known yet (its entity has no value after a restart).
-        """
-        ac, dc = 1 + self.loss_pct(False) / 100, 1 + self.loss_pct(True) / 100
-        prices: dict[str, float | None] = {}
-        if self._has_price(CONF_PRICE_ENTITY, CONF_PRICE_FIXED):
-            price = self.price()
-            if price is None:
-                return None
-            prices["home"] = price * ac
-        if self.config.get(CONF_SOLAR_POWER_ENTITY):
-            if self._has_price(CONF_SOLAR_PRICE_ENTITY, CONF_SOLAR_PRICE_FIXED):
-                price = self._configured_price(CONF_SOLAR_PRICE_ENTITY, CONF_SOLAR_PRICE_FIXED)
-                if price is None:
-                    return None
-                prices["solar"] = price * ac
-            else:
-                prices["solar"] = 0.0
-        if self._has_price(CONF_PUBLIC_PRICE_ENTITY, CONF_PUBLIC_PRICE_FIXED):
-            price = self.public_price()
-            if price is None:
-                return None
-            prices["public"] = price * dc
-        return prices
-
-    def battery_price(self) -> float | None:
-        """Average price per kWh of the energy now in the battery."""
-        st = self.state
-        if st.battery_value is None or st.soc.last_soc is None:
-            return None
-        energy = (st.soc.last_soc - st.soc.regen_credit) / 100 * self.capacity_kwh
-        return st.battery_value / energy if energy > 0 else None
-
     def _ensure_cost_seed(self) -> bool:
         """Value the energy in the battery once, when cost tracking starts. True when it did.
 
@@ -322,30 +273,12 @@ class FordEvEngine:
         st.driving_cost = st.soc.energy_used * price
         for snap in st.periods.snapshots.values():
             snap.values["driving_cost"] = snap.values.get("energy_used", st.soc.energy_used) * price
+        if st.summary_totals is not None:
+            st.summary_totals["driving_cost"] = st.summary_totals.get("energy_used", st.soc.energy_used) * price
         for previous in st.periods.previous.values():
             if "energy_used" in previous:
                 previous["driving_cost"] = previous["energy_used"] * price
         return True
-
-    def loss_pct(self, dc: bool) -> float:
-        """Energy billed above what the car reports, in percent."""
-        return float(self.config[CONF_DC_LOSS_PCT] if dc else self.config[CONF_AC_LOSS_PCT])
-
-    def solar_surplus_kw(self) -> float | None:
-        """Solar power left after the house base load, or None without a solar power entity."""
-        entity_id = self.config.get(CONF_SOLAR_POWER_ENTITY)
-        if not entity_id:
-            return None
-        state = self.hass.states.get(entity_id)
-        value = state_number(state)
-        if value is None:
-            return None
-        unit = state.attributes.get(ATTR_UNIT_OF_MEASUREMENT) or UnitOfPower.WATT  # type: ignore[union-attr]
-        try:
-            kw = PowerConverter.convert(value, unit, UnitOfPower.KILO_WATT)
-        except Exception:  # noqa: BLE001 - an unknown unit means no solar estimate, never a crash
-            return None
-        return max(kw - float(self.config[CONF_BASE_LOAD_W]) / 1000, 0.0)
 
     def totals(self) -> dict[str, float]:
         """Cumulative counters used for report periods."""
@@ -462,6 +395,13 @@ class FordEvEngine:
             odometer = state_km(new_state)
             if odometer is not None:
                 self._on_odometer(odometer)
+        elif key == "tracker" and _valid(new_state):
+            session = self.state.session
+            if session is not None and not session.home_known:
+                # The car reports the plug and its position separately: until the session's
+                # first energy is counted, the newest position is where it charges.
+                session.home = new_state.state == "home"
+                self.save()
 
     def _on_odometer(self, odometer_km: float) -> None:
         # Roll first, so distance driven before a missed period boundary stays in that period.
@@ -483,7 +423,9 @@ class FordEvEngine:
         if used > 0:
             self._on_energy_used(used, before)
         if self.state.model.model_energy is None:
-            self.state.model = replace(self.state.model, model_energy=soc / 100 * self.capacity_kwh)
+            capacity = self.capacity_kwh
+            energy = soc / 100 * capacity
+            self.state.model = replace(self.state.model, model_energy=energy, cycle_deficit=capacity - energy)
         if soc >= SOC_FULL:
             self._start_calibration_timer()
         elif self._calibration_timer is not None:
@@ -512,6 +454,10 @@ class FordEvEngine:
                 last["cost"] = (last.get("cost") or 0.0) + cost
                 if last.get("bin") is not None:
                     add_to_bin(st.temp_bins, last["bin"], kwh=used, cost=cost)
+                if last.get("speed_bin") is not None:
+                    add_to_bin(st.speed_bins, last["speed_bin"], kwh=used)
+                if st.trips and st.trips[-1]["end_ts"] == last.get("end_ts") and st.trips[-1].get("kwh") is not None:
+                    st.trips[-1]["kwh"] += used
                 self._finish_trip_record(last)
             return
         st.parked_energy += used
@@ -523,8 +469,10 @@ class FordEvEngine:
         since = st.charger_last_ts
         if st.session is not None:
             since = max(since or 0.0, st.session.start_ts)
-        window_h = min(max(now_ts - since, 0.0), SOLAR_WINDOW_MAX_S) / 3600 if since is not None else 0.0
+        solar_kwh = self._solar_available(since, now_ts)
         increment = charger_increment(st.charger_last_reading, reading)
+        if st.session is not None and increment > 0 and since is not None and now_ts - since >= MIN_POWER_STEP_S:
+            self.charging_power_kw = increment / ((now_ts - since) / 3600)
         if st.session is not None:
             if st.session.counter_seen and st.charger_last_reading is not None and reading < st.charger_last_reading:
                 st.session.counter_restarts += 1
@@ -532,22 +480,39 @@ class FordEvEngine:
         if reading != st.charger_last_reading:
             # The energy of the next step builds up from this change on.
             st.charger_last_ts = now_ts
+            self._solar_reset(now_ts)
         st.charger_last_reading = reading
         if increment > 0:
-            self._add_charger_energy(increment, dc, window_h)
+            self._add_charger_energy(increment, dc, solar_kwh)
         self.save()
 
-    def _add_charger_energy(self, kwh: float, dc: bool = False, window_h: float = 0.0) -> None:
+    # Solar surplus is added up between two changes of the charger counter, from the changes of
+    # the solar power entity, so a cloud or a sunrise within the step counts for its duration.
+
+    def _charging_at_home(self) -> bool:
+        """Where energy being charged is billed.
+
+        A session is billed in one place: where the car was when its first energy was counted.
+        Later position changes (a tracker that drifts out of the zone) do not move it.
+        """
+        session = self.state.session
+        if session is None:
+            return self.is_home()
+        if not session.home_known and "tracker" in self._last_valid:
+            session.home = self.is_home()
+            session.home_known = True
+        return session.home if session.home_known else self.is_home()
+
+    def _add_charger_energy(self, kwh: float, dc: bool = False, solar_kwh: float = 0.0) -> None:
         self._roll()
         self._ensure_cost_seed()
         st = self.state
         st.charger_energy += kwh
+        if dc and st.session is not None:
+            st.session.dc_kwh += kwh
         st.model = add_charge(st.model, kwh, self.capacity_kwh)
-        if self.is_home():
-            surplus = self.solar_surplus_kw()
-            priced = price_charge(
-                kwh, self.loss_pct(dc), self.price() or 0.0, (surplus or 0.0) * window_h, self.solar_price()
-            )
+        if self._charging_at_home():
+            priced = price_charge(kwh, self.loss_pct(dc), self.price() or 0.0, solar_kwh, self.solar_price())
             st.charger_energy_home += kwh
             st.charger_energy_solar += priced.solar_kwh
             st.cost_home += priced.cost
@@ -592,6 +557,11 @@ class FordEvEngine:
         for counter, value in added.items():
             setattr(st, counter, getattr(st, counter) + value)
         self._shift_periods(dt_util.as_local(when).date(), added)
+        summary = st.summary_totals
+        if summary is not None and when.timestamp() < summary.get("ts", 0.0):
+            for counter, value in added.items():
+                if counter in summary:
+                    summary[counter] += value
         self.notify_listeners()
         self.save()
 
@@ -661,7 +631,10 @@ class FordEvEngine:
             cost_at_start=st.cost,
             model_soc_at_start=model_soc(st.model, self.capacity_kwh),
             home=self.is_home(),
+            home_known=False,
         )
+        self._solar_reset(st.session.start_ts)
+        self.charging_power_kw = None
         self.emit("charging", "session_started", {"start_soc": st.session.start_soc, "location": self._location()})
 
     def _location(self) -> str:
@@ -691,6 +664,9 @@ class FordEvEngine:
                 self._finalise_session(st.pending_session_end["to"], st.pending_session_end["ts"])
         elif st.session is not None and st.pending_session_end is None and evcc != "C":
             self._finalise_session(evcc, dt_util.utcnow().timestamp())
+        elif st.session is None and evcc == "C":
+            # Started while the car was charging: no change to "charging" will come.
+            self._start_session()
 
     def _apply_session_fallback(self) -> None:
         """Count energy of the open session that the charger counter did not report.
@@ -730,6 +706,8 @@ class FordEvEngine:
         kwh = max(st.charger_energy - session.charger_at_start, 0.0)
         cost = st.cost - session.cost_at_start
         price = self.price() if session.home else self.public_price()
+        battery_kwh = max(st.soc.energy_added - session.added_at_start, 0.0)
+        efficiency_pct = self._session_efficiency(session, end_soc, kwh, battery_kwh)
         target = st.settings.charge_target
 
         if to == "B":
@@ -763,6 +741,9 @@ class FordEvEngine:
             "kwh": round(kwh, 3),
             # Part of kwh taken from the state of charge because the charger counter missed it.
             "estimated_kwh": round(estimated_kwh, 3),
+            # What reached the battery, from the state of charge, and its share of kwh.
+            "battery_kwh": round(battery_kwh, 1),
+            "efficiency_pct": round(efficiency_pct, 1) if efficiency_pct is not None else None,
             "cost": round(cost, 2),
             "avg_kw": round(avg_kw, 1) if avg_kw is not None else None,
             "price_per_kwh": round(cost / kwh, 3) if kwh > 0 and price is not None else None,
@@ -772,11 +753,49 @@ class FordEvEngine:
             "model_soc_at_start": session.model_soc_at_start,
             "summary": summary,
         }
+        if kwh > 0:
+            st.sessions_count += 1
+            st.sessions_kwh += kwh
+            st.sessions_dc_kwh += min(session.dc_kwh, kwh)
+            if session.start_soc is not None:
+                st.sessions_start_soc_sum += session.start_soc
+                st.sessions_start_soc_count += 1
+        self.charging_power_kw = None
         st.last_session = data
         st.session = None
         self.emit("charging", event_type, data)
+        if (
+            event_type == "charging_complete"
+            and self.config[CONF_CALIBRATE_AT_TARGET]
+            and end_soc is not None
+            and end_soc < SOC_FULL
+        ):
+            # Opted in: a charge that reached its target closes the cycle like a full one, with
+            # the car's state of charge telling how far from full the battery is.
+            self._calibrate(end_ts, end_deficit=(100 - end_soc) / 100 * self.capacity_kwh)
         self.notify_listeners()
         self.save()
+
+    def _session_efficiency(
+        self, session: ChargingSession, end_soc: float | None, kwh: float, battery_kwh: float
+    ) -> float | None:
+        """Battery energy as a share of the charger energy, for a session long enough to tell.
+
+        Not for a session whose charger energy was itself taken from the state of charge.
+        """
+        if session.fallback_kwh > 0 or kwh <= 0 or session.start_soc is None or end_soc is None:
+            return None
+        if end_soc - session.start_soc < MIN_EFFICIENCY_POINTS:
+            return None
+        pct = battery_kwh / kwh * 100
+        if not EFFICIENCY_BOUNDS_PCT[0] <= pct <= EFFICIENCY_BOUNDS_PCT[1]:
+            return None
+        st = self.state
+        st.eff_charger_kwh += kwh
+        st.eff_battery_kwh += battery_kwh
+        st.eff_sessions += 1
+        st.eff_last_pct = pct
+        return pct
 
     # ------------------------------------------------------------------ temperature
 
@@ -793,13 +812,25 @@ class FordEvEngine:
         return None
 
     @callback
-    def _on_temperature_change(self, _event: Event[EventStateChangedData]) -> None:
+    def _on_temperature_change(self, event: Event[EventStateChangedData]) -> None:
+        weather = self.config.get(CONF_WEATHER_ENTITY)
+        if (
+            self.forecast_tomorrow_c is None
+            and weather
+            and event.data["entity_id"] == weather
+            and _valid(event.data["new_state"])
+        ):
+            # The weather entity was not there yet when the engine started.
+            self.entry.async_create_task(self.hass, self.async_refresh_forecast(), "ford_ev forecast")
         self.notify_listeners()
 
     @callback
     def _on_price_change(self, _event: Event[EventStateChangedData]) -> None:
+        recorded = self._record_prices()
         if self._ensure_cost_seed():
             self._roll()
+            self.save()
+        elif recorded:
             self.save()
         self.notify_listeners()
 
@@ -921,6 +952,7 @@ class FordEvEngine:
         if km is None or km < MIN_TRIP_KM:
             if kwh:
                 # Ignition on without driving, for example to warm the cabin.
+                st.idle_energy += kwh
                 st.parked_energy += kwh
                 st.parked_cost += cost or 0.0
             return
@@ -935,6 +967,26 @@ class FordEvEngine:
         band = bin_key(temp) if kwh is not None and temp is not None else None
         if band is not None:
             add_to_bin(st.temp_bins, band, km=km, kwh=kwh or 0.0, cost=cost or 0.0)
+        speed = km / hours if hours is not None and hours >= 0.02 else None
+        speed_band = speed_key(speed) if kwh is not None and speed is not None else None
+        if speed_band is not None:
+            add_to_bin(st.speed_bins, speed_band, km=km, kwh=kwh or 0.0)
+        after = st.model
+        predicted = before.a * (after.cycle_x_drive - before.cycle_x_drive) + before.b * (
+            after.cycle_x_hvac - before.cycle_x_hvac
+        )
+        st.trips = [
+            *st.trips,
+            {
+                "end_ts": end_ts,
+                "km": round(km, 1),
+                "kwh": kwh,
+                "min": int(hours * 60) if hours is not None else None,
+                "speed": round(speed) if speed is not None else None,
+                "temp": round(temp, 1) if temp is not None else None,
+                "pred": round(predicted, 3),
+            },
+        ][-TRIP_LOG_SIZE:]
         record: dict[str, Any] = {
             "start": dt_util.as_local(dt_util.utc_from_timestamp(start_ts)).isoformat() if start_ts is not None else None,
             "end": dt_util.as_local(dt_util.utc_from_timestamp(end_ts)).isoformat(),
@@ -946,10 +998,11 @@ class FordEvEngine:
             "kwh": kwh,
             "cost": cost,
             "bin": band,
+            "speed_bin": speed_band,
         }
         self._finish_trip_record(record)
         st.last_trip = record
-        self.emit("report", "trip_finished", {k: v for k, v in record.items() if k not in ("end_ts", "bin")})
+        self.emit("report", "trip_finished", {k: v for k, v in record.items() if k not in ("end_ts", "bin", "speed_bin")})
 
     def _finish_trip_record(self, record: dict[str, Any]) -> None:
         """Derived figures and the text of a trip record; again when energy arrives late."""
@@ -986,10 +1039,13 @@ class FordEvEngine:
         soc = state_number(self.fcq_state("soc"))
         temp = self.current_temp_c()
         a0 = seed_drive_factor(soc, state_km(self.fcq_state("elveh")), self.capacity_kwh, temp if temp is not None else 20.0)
+        capacity = self.capacity_kwh
+        energy = soc / 100 * capacity if soc is not None else None
         model = RangeModelState(
             a=a0,
             a0=a0,
-            model_energy=soc / 100 * self.capacity_kwh if soc is not None else None,
+            model_energy=energy,
+            cycle_deficit=capacity - energy if energy is not None else None,
             odo_accounted=state_km(self.fcq_state("odometer")),
         )
         if avg_speed is not None:
@@ -1018,36 +1074,65 @@ class FordEvEngine:
             return
         # Vehicles without a charger counter: the open session's energy must be in this cycle.
         self._apply_session_fallback()
+        self._calibrate(now_ts)
+
+    def _calibrate(self, now_ts: float, end_deficit: float = 0.0) -> None:
+        """Close the cycle. end_deficit is what the battery is short of full: 0 at 100 %."""
         if not calibration_allowed(self.state.model, now_ts):
             self.save()
             return
-        session_kwh, start_soc_car, start_soc_model = self._calibration_session()
+        session_kwh, start_soc_car, start_soc_model, from_soc = self._calibration_session()
+        # Below 100 % the session does not end at a known full battery: no capacity estimate.
+        from_soc = from_soc or end_deficit > 0
+        estimate = None if from_soc else capacity_estimate(session_kwh, start_soc_car)
+        if estimate is not None:
+            st = self.state
+            st.capacity_estimate = estimate
+            st.capacity_estimates = [*st.capacity_estimates, estimate][-CAPACITY_ESTIMATES_KEPT:]
         self.state.model, result = calibrate(
-            self.state.model, self.capacity_kwh, now_ts, session_kwh, start_soc_car, start_soc_model
+            self.state.model,
+            self.capacity_kwh,
+            now_ts,
+            session_kwh,
+            start_soc_car,
+            start_soc_model,
+            estimate_capacity=not from_soc,
+            end_deficit=end_deficit,
         )
-        if result.capacity_estimate_kwh is not None:
-            self.state.capacity_estimate = result.capacity_estimate_kwh
         factors = (
             f"Drive x{result.a:.2f}, climate x{result.b:.2f}." if result.valid else f"Not used (ratio {result.ratio:.2f})."
         )
         summary = (
-            f"{result.km:.0f} km, {result.charged_kwh:.1f} kWh charged, model {result.predicted_kwh:.1f} kWh "
+            f"{result.km:.0f} km, {result.used_kwh:.1f} kWh used, model {result.predicted_kwh:.1f} kWh "
             f"({result.error_pct:+.1f}%). {factors}"
         )
         self.emit("report", "calibration", {**asdict(result), "summary": summary})
         self.notify_listeners()
         self.save()
 
-    def _calibration_session(self) -> tuple[float | None, float | None, float | None]:
+    def _calibration_session(self) -> tuple[float | None, float | None, float | None, bool]:
+        """The final charge of the cycle: kWh, car and model SoC at its start, and whether part
+        of the kWh was taken from the state of charge."""
         st = self.state
-        if st.session is not None:
-            return st.charger_energy - st.session.charger_at_start, st.session.start_soc, st.session.model_soc_at_start
+        session = st.session
+        if session is not None:
+            return (
+                st.charger_energy - session.charger_at_start,
+                session.start_soc,
+                session.model_soc_at_start,
+                session.fallback_kwh > 0,
+            )
         last = st.last_session
         if last:
             end = dt_util.parse_datetime(str(last.get("end", "")))
             if end is not None and dt_util.utcnow() - end <= LAST_SESSION_MAX_AGE:
-                return last.get("kwh"), last.get("start_soc"), last.get("model_soc_at_start")
-        return None, None, None
+                return (
+                    last.get("kwh"),
+                    last.get("start_soc"),
+                    last.get("model_soc_at_start"),
+                    (last.get("estimated_kwh") or 0.0) > 0,
+                )
+        return None, None, None, False
 
     # ------------------------------------------------------------------ timers
 

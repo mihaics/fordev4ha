@@ -17,17 +17,15 @@ def test_drop_counts_used():
     assert st.energy_used == pytest.approx(6.0)
 
 
-def test_plugged_rise_counts_added_and_home():
+def test_plugged_rise_counts_added():
     st = apply_soc_change(SocAccountingState(last_soc=40, regen_credit=2), 90, CAP, True, True)
     assert st.energy_added == pytest.approx(30.0)
-    assert st.energy_added_home == pytest.approx(30.0)
     assert st.regen_credit == 0
 
 
 def test_plugged_rise_away_not_home():
     st = apply_soc_change(SocAccountingState(last_soc=40), 50, CAP, True, False)
     assert st.energy_added == pytest.approx(6.0)
-    assert st.energy_added_home == 0
 
 
 def test_large_unplugged_rise_counts_added():

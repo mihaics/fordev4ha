@@ -62,7 +62,11 @@
           "weather_entity": "Weather entity",
           "ice_consumption": "Fuel car consumption",
           "fuel_price_entity": "Fuel price entity",
-          "fuel_price_fixed": "Fixed fuel price"
+          "fuel_price_fixed": "Fixed fuel price",
+          "house_load_entity": "House power sensor",
+          "fuel_co2_kg_l": "CO2 per litre of fuel",
+          "grid_co2_g_kwh": "CO2 per kWh of electricity",
+          "calibrate_at_target": "Calibrate at the charge target"
         },
         "data_description": {
           "notify_services": "For example mobile_app_ followed by your phone name. Leave empty to send no notifications; the event entities still fire.",
@@ -79,7 +83,11 @@
           "dc_loss_pct": "Energy the meter bills above what the car reports when charging on DC.",
           "ice_consumption": "Optional. Litres per 100 km of the combustion car to compare with. When set, a sensor shows what driving electric has saved.",
           "fuel_price_entity": "Price per litre in your currency. Takes precedence over the fixed fuel price.",
-          "fuel_price_fixed": "Price per litre, used when no fuel price entity is set."
+          "fuel_price_fixed": "Price per litre, used when no fuel price entity is set.",
+          "house_load_entity": "Power the house uses without the car. When set, it replaces the fixed base load.",
+          "fuel_co2_kg_l": "Optional, in kg per litre, for the fuel of the car to compare with. With the next field and the fuel car consumption, a sensor shows the CO2 saved.",
+          "grid_co2_g_kwh": "Optional, in g per kWh, for the electricity you charge with.",
+          "calibrate_at_target": "Also calibrate the range model when a charge reaches a charge target below 100 %, using the car's state of charge. Only for batteries whose state of charge is reliable below 100 %; leave off for LFP."
         }
       }
     },
@@ -303,6 +311,24 @@
       },
       "capacity_estimate": {
         "name": "Capacity estimate"
+      },
+      "charging_efficiency": {
+        "name": "Charging efficiency"
+      },
+      "days_of_range": {
+        "name": "Days of range"
+      },
+      "trips": {
+        "name": "Trips in the last 7 days"
+      },
+      "charging_power": {
+        "name": "Charging power"
+      },
+      "charging_sessions": {
+        "name": "Charging sessions"
+      },
+      "co2_savings": {
+        "name": "CO2 saved vs fuel"
       }
     },
     "binary_sensor": {

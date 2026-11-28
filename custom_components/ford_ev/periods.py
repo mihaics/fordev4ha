@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
-COUNTERS = ("odometer", "energy_used", "energy_added", "charger_energy", "charger_energy_home", "cost")
 PERIODS = ("day", "week", "month", "year")
 LIFETIME = "total"
 

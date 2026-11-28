@@ -39,7 +39,11 @@ class ChargingSession:
     cost_at_start: float
     model_soc_at_start: float | None
     home: bool
+    # False until the session's first energy is counted, which fixes `home`.
+    home_known: bool = True
     fallback_kwh: float = 0.0
+    # Energy counted while the car reported DC charging; it stops reporting the type when unplugged.
+    dc_kwh: float = 0.0
     # The charger counter was read in this session, and how often it started again from zero.
     counter_seen: bool = False
     counter_restarts: int = 0
@@ -79,7 +83,29 @@ class EngineState:
     trip_cost_start: float | None = None
     last_trip: dict[str, Any] | None = None
     temp_bins: dict[str, dict[str, float]] = field(default_factory=dict)
+    speed_bins: dict[str, dict[str, float]] = field(default_factory=dict)
+    # The last trips, oldest first: end_ts, km, kwh, min, speed, temp, pred (the model's kWh).
+    trips: list[dict[str, Any]] = field(default_factory=list)
+    # Part of parked_energy used with the ignition on and the car not moving.
+    idle_energy: float = 0.0
+    # Finished charging sessions that delivered energy.
+    sessions_count: int = 0
+    sessions_kwh: float = 0.0
+    sessions_dc_kwh: float = 0.0
+    sessions_start_soc_sum: float = 0.0
+    sessions_start_soc_count: int = 0
     capacity_estimate: float | None = None
+    # The last estimates, oldest first; the sensor shows their median.
+    capacity_estimates: list[float] = field(default_factory=list)
+    # Last value read from each price entity, by entity ID, for when it is unavailable.
+    last_prices: dict[str, float] = field(default_factory=dict)
+    # Charger and battery energy of the sessions long enough to compare the two.
+    eff_charger_kwh: float = 0.0
+    eff_battery_kwh: float = 0.0
+    eff_sessions: int = 0
+    eff_last_pct: float | None = None
+    # The counters at the last weekly summary, with "ts"; the next one reports the difference.
+    summary_totals: dict[str, float] | None = None
 
     @classmethod
     def new(cls) -> EngineState:
@@ -113,8 +139,16 @@ class EngineState:
         st.session = _build(ChargingSession, session) if session else None
         st.alerts_armed = dict(data.get("alerts_armed") or {})
         st.temp_bins = {str(k): dict(v) for k, v in (data.get("temp_bins") or {}).items()}
+        st.speed_bins = {str(k): dict(v) for k, v in (data.get("speed_bins") or {}).items()}
+        st.trips = [dict(t) for t in data.get("trips") or []]
         if "capacity_estimate" not in data:
             st.capacity_estimate = (st.model.last_result or {}).get("capacity_estimate_kwh")
+        st.capacity_estimates = [float(v) for v in data.get("capacity_estimates") or []]
+        if "capacity_estimates" not in data and st.capacity_estimate is not None:
+            st.capacity_estimates = [float(st.capacity_estimate)]
+        st.last_prices = {str(k): float(v) for k, v in (data.get("last_prices") or {}).items()}
+        summary = data.get("summary_totals")
+        st.summary_totals = dict(summary) if summary else None
         return st
 
 

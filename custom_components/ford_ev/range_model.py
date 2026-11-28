@@ -2,7 +2,7 @@
 
 Trip energy = a * drive(km, T) + b * hours * climate(T, setpoint, on). At 100 % the battery is
 full again, so the energy charged since the previous 100 % is the energy really used in that
-cycle; a and b are refitted from it by ridge least squares with forgetting.
+cycle (less, for the cycle that began at setup, what the battery was short of full then); a and b are refitted from it by ridge least squares with forgetting.
 
 Pure functions, no Home Assistant dependency.
 """
@@ -35,6 +35,7 @@ MIN_CALIBRATION_GAP_S = 6 * 3600
 MIN_CYCLE_MODEL_KWH = 3.0
 RATIO_BOUNDS = (0.5, 2.0)
 CAPACITY_ESTIMATE_MAX_START_SOC = 80
+CAPACITY_ESTIMATES_KEPT = 5
 
 
 def _clamp(value: float, bounds: tuple[float, float]) -> float:
@@ -81,6 +82,9 @@ class RangeModelState:
     cycle_x_hvac: float = 0.0
     cycle_charged: float = 0.0
     cycle_km: float = 0.0
+    # kWh the model battery was short of full when the cycle began: 0 after a calibration, more
+    # for the cycle that began at setup or at a reset. None in state stored before 0.5.0.
+    cycle_deficit: float | None = None
     model_energy: float | None = None
     avg_speed: float = 45.0
     odo_accounted: float | None = None
@@ -109,6 +113,9 @@ class CalibrationResult:
     ratio: float
     km: float
     charged_kwh: float
+    # Energy used in the cycle: what was charged, less what only refilled a battery that was
+    # not full when the cycle began.
+    used_kwh: float
     predicted_kwh: float
     error_pct: float
     a: float
@@ -169,6 +176,18 @@ def add_charge(st: RangeModelState, kwh: float, capacity_kwh: float) -> RangeMod
     return replace(st, model_energy=model_energy, cycle_charged=st.cycle_charged + kwh)
 
 
+def capacity_estimate(session_kwh: float | None, start_soc_car: float | None) -> float | None:
+    """Charger energy per 100 % of charge, from a session that ended full.
+
+    It is the usable capacity plus the losses between the charger counter and the battery.
+    """
+    if session_kwh is None or session_kwh <= 0 or start_soc_car is None:
+        return None
+    if start_soc_car >= CAPACITY_ESTIMATE_MAX_START_SOC:
+        return None
+    return session_kwh / (100 - start_soc_car) * 100
+
+
 def calibration_allowed(st: RangeModelState, now_ts: float) -> bool:
     """Enough charged this cycle, and not calibrated in the last 6 hours."""
     if st.cycle_charged < MIN_CYCLE_CHARGED_KWH:
@@ -183,9 +202,18 @@ def calibrate(
     session_kwh: float | None,
     session_start_soc_car: float | None,
     session_start_soc_model: float | None,
+    estimate_capacity: bool = True,
+    end_deficit: float = 0.0,
 ) -> tuple[RangeModelState, CalibrationResult]:
-    """Refit the factors from the finished cycle and reset the model to full."""
-    x1, x2, y = st.cycle_x_drive, st.cycle_x_hvac, st.cycle_charged
+    """Refit the factors from the finished cycle and reset the model to full.
+
+    estimate_capacity is False when the session's energy was itself derived from the state of
+    charge. end_deficit is what the battery is short of full now: 0 at 100 %, more for a
+    calibration at a lower charge target, where the car's state of charge says how much.
+    Energy used = charged - (deficit at the start of the cycle) + (deficit now).
+    """
+    x1, x2 = st.cycle_x_drive, st.cycle_x_hvac
+    y = max(st.cycle_charged - (st.cycle_deficit or 0.0) + end_deficit, 0.0)
     pred = st.a * x1 + st.b * x2
     ratio = y / pred if pred > 0 else 0.0
     valid = x1 + x2 >= MIN_CYCLE_MODEL_KWH and RATIO_BOUNDS[0] <= ratio <= RATIO_BOUNDS[1]
@@ -212,23 +240,22 @@ def calibrate(
             "last_error_pct": error_pct,
         }
 
-    capacity_estimate = None
+    estimate = capacity_estimate(session_kwh, session_start_soc_car) if estimate_capacity else None
     soc_start_charger = None
     if session_kwh is not None and session_kwh > 0:
         soc_start_charger = 100 - session_kwh / capacity_kwh * 100
-        if session_start_soc_car is not None and session_start_soc_car < CAPACITY_ESTIMATE_MAX_START_SOC:
-            capacity_estimate = session_kwh / (100 - session_start_soc_car) * 100
 
     result = CalibrationResult(
         valid=valid,
         ratio=ratio,
         km=st.cycle_km,
-        charged_kwh=y,
+        charged_kwh=st.cycle_charged,
+        used_kwh=y,
         predicted_kwh=pred,
         error_pct=error_pct,
         a=a,
         b=b,
-        capacity_estimate_kwh=capacity_estimate,
+        capacity_estimate_kwh=estimate,
         soc_start_car=session_start_soc_car,
         soc_start_model=session_start_soc_model,
         soc_start_charger=soc_start_charger,
@@ -236,11 +263,12 @@ def calibrate(
     new_state = replace(
         st,
         **updates,
-        model_energy=capacity_kwh,
+        model_energy=capacity_kwh - end_deficit,
         cycle_x_drive=0.0,
         cycle_x_hvac=0.0,
         cycle_charged=0.0,
         cycle_km=0.0,
+        cycle_deficit=end_deficit,
         last_calibration=now_ts,
         last_result=asdict(result),
     )
@@ -253,6 +281,18 @@ def seed_drive_factor(soc: float | None, range_km: float | None, capacity_kwh: f
         return 1.0
     implied = soc / 100 * capacity_kwh / range_km
     return _clamp(implied / drive_kwh(1, temp_c), A_BOUNDS)
+
+
+def first_cycle_deficit(st: RangeModelState, capacity_kwh: float) -> float:
+    """The deficit of a cycle that began before it was recorded, from the cycle so far.
+
+    Until the first calibration the factors do not change, so the model battery at the start
+    of the cycle is what it holds now, plus what the model took out, less what was charged.
+    """
+    if st.last_calibration is not None or st.model_energy is None:
+        return 0.0
+    start = st.model_energy + st.a * st.cycle_x_drive + st.b * st.cycle_x_hvac - st.cycle_charged
+    return _clamp(capacity_kwh - start, (0.0, capacity_kwh))
 
 
 def model_soc(st: RangeModelState, capacity_kwh: float) -> float | None:
